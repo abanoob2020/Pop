@@ -55,13 +55,16 @@ dropped-then-created and seed data is cleared before re-insertion.
 users ─< coaches ─< members ─< memberships >─ plans
                        │            │
                        │            └─< payments
-                       ├─< assessments        ├─< injury_history
-                       ├─< daily_attendance   ├─< followups
-                       ├─< progress_tracking  ├─< retention_flags
+                       ├─< assessments ─< retention_flags ─< tasks
+                       ├─< injury_history     (tasks also → members, coaches)
+                       ├─< daily_attendance
+                       ├─< followups
+                       ├─< progress_tracking
                        ├─< workout_plans ─< workout_sessions
-                       ├─< nutrition_plans ─< supplements
-                       ├─< milestones         └─< messages_log
-                       └─ tasks (assigned_to/created_by → users)
+                       ├─< nutrition_plans
+                       ├─< supplements
+                       ├─< messages_log
+                       └─< milestones
 audit_logs (written by triggers; actor → users)
 ```
 

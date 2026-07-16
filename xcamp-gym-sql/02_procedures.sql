@@ -193,22 +193,22 @@ END$$
 -- -----------------------------------------------------------------------------
 CREATE PROCEDURE sp_flag_member(
   IN p_member_id BIGINT UNSIGNED,
-  IN p_flag_type ENUM('at_risk','no_show','payment_due','inactive','win_back'),
-  IN p_severity  ENUM('low','medium','high'),
-  IN p_reason    VARCHAR(255)
+  IN p_flag_type ENUM('low_attendance','no_show','payment_failed','injury','low_motivation','no_progress','low_response'),
+  IN p_severity  ENUM('low','medium','high','critical'),
+  IN p_action    VARCHAR(255)
 )
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM members WHERE member_id = p_member_id) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'sp_flag_member: member not found';
   END IF;
 
-  INSERT INTO retention_flags (member_id, flag_type, severity, reason, raised_at)
-  VALUES (p_member_id, p_flag_type, COALESCE(p_severity,'medium'), p_reason, NOW());
+  INSERT INTO retention_flags (member_id, flag_type, severity, status, detected_at, action_required)
+  VALUES (p_member_id, p_flag_type, COALESCE(p_severity,'medium'), 'open', NOW(), p_action);
 
-  IF p_flag_type IN ('at_risk','inactive','no_show') THEN
+  IF p_flag_type IN ('low_attendance','no_show','no_progress','low_motivation','low_response') THEN
     UPDATE members
     SET status = 'at_risk'
-    WHERE member_id = p_member_id AND status NOT IN ('expired','paused','cancelled');
+    WHERE member_id = p_member_id AND status NOT IN ('expired','paused');
   END IF;
 END$$
 

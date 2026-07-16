@@ -108,11 +108,12 @@ SELECT
   m.status AS member_status,
   rf.flag_type,
   rf.severity,
-  rf.reason,
-  rf.raised_at
+  rf.status AS flag_status,
+  rf.action_required,
+  rf.detected_at
 FROM retention_flags rf
 JOIN members m ON m.member_id = rf.member_id
-WHERE rf.is_resolved = 0;
+WHERE rf.status IN ('open','in_progress');
 
 -- -----------------------------------------------------------------------------
 -- Open (pending) follow-ups with owning coach.

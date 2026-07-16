@@ -255,41 +255,39 @@ CREATE TABLE workout_plans (
   workout_plan_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   member_id BIGINT UNSIGNED NOT NULL,
   coach_id BIGINT UNSIGNED NULL,
-  title VARCHAR(150) NOT NULL,
-  goal ENUM('fat_loss','muscle_gain','strength','endurance','rehab','general') NOT NULL DEFAULT 'general',
-  start_date DATE NULL,
+  goal_type ENUM('fat_loss','muscle_gain','strength','rehab','performance','general_fitness') NOT NULL DEFAULT 'general_fitness',
+  phase ENUM('corrective','stabilization','hypertrophy','strength','power','maintenance') NOT NULL DEFAULT 'stabilization',
+  start_date DATE NOT NULL,
   end_date DATE NULL,
-  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  status ENUM('active','paused','completed','cancelled') NOT NULL DEFAULT 'active',
   notes TEXT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  CONSTRAINT fk_wplans_member FOREIGN KEY (member_id) REFERENCES members(member_id)
+  CONSTRAINT fk_workout_plans_member FOREIGN KEY (member_id) REFERENCES members(member_id)
     ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT fk_wplans_coach FOREIGN KEY (coach_id) REFERENCES coaches(coach_id)
-    ON DELETE SET NULL ON UPDATE CASCADE,
-  INDEX idx_wplans_member (member_id)
+  CONSTRAINT fk_workout_plans_coach FOREIGN KEY (coach_id) REFERENCES coaches(coach_id)
+    ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------
--- Workout sessions (scheduled / logged training sessions)
+-- Workout sessions (planned / logged training sessions within a plan)
 -- -----------------------------------------------------------------------------
 CREATE TABLE workout_sessions (
   session_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  workout_plan_id BIGINT UNSIGNED NULL,
-  member_id BIGINT UNSIGNED NOT NULL,
+  workout_plan_id BIGINT UNSIGNED NOT NULL,
   session_date DATE NOT NULL,
-  focus VARCHAR(120) NULL,
-  duration_min SMALLINT UNSIGNED NULL,
-  status ENUM('scheduled','completed','skipped') NOT NULL DEFAULT 'scheduled',
-  rpe TINYINT UNSIGNED NULL,
+  muscle_group VARCHAR(80) NULL,
+  exercises TEXT NULL,
+  sets_info TEXT NULL,
+  reps_info TEXT NULL,
+  load_info TEXT NULL,
+  intensity_info VARCHAR(80) NULL,
+  completion_status ENUM('planned','partial','completed','missed') NOT NULL DEFAULT 'planned',
   notes TEXT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_wsessions_plan FOREIGN KEY (workout_plan_id) REFERENCES workout_plans(workout_plan_id)
-    ON DELETE SET NULL ON UPDATE CASCADE,
-  CONSTRAINT fk_wsessions_member FOREIGN KEY (member_id) REFERENCES members(member_id)
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT chk_wsessions_rpe CHECK (rpe IS NULL OR rpe BETWEEN 1 AND 10),
-  INDEX idx_wsessions_member_date (member_id, session_date)
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_workout_sessions_plan FOREIGN KEY (workout_plan_id) REFERENCES workout_plans(workout_plan_id)
+    ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------
@@ -299,41 +297,38 @@ CREATE TABLE nutrition_plans (
   nutrition_plan_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   member_id BIGINT UNSIGNED NOT NULL,
   coach_id BIGINT UNSIGNED NULL,
-  title VARCHAR(150) NOT NULL,
-  calories_target INT UNSIGNED NULL,
-  protein_g SMALLINT UNSIGNED NULL,
-  carbs_g SMALLINT UNSIGNED NULL,
-  fats_g SMALLINT UNSIGNED NULL,
-  start_date DATE NULL,
-  end_date DATE NULL,
-  is_active TINYINT(1) NOT NULL DEFAULT 1,
-  notes TEXT NULL,
+  calories INT NULL,
+  protein_g DECIMAL(6,2) NULL,
+  fat_g DECIMAL(6,2) NULL,
+  carbs_g DECIMAL(6,2) NULL,
+  hydration_target_l DECIMAL(5,2) NULL,
+  meal_timing TEXT NULL,
+  refeed_protocol TEXT NULL,
+  diet_break_protocol TEXT NULL,
+  status ENUM('active','paused','completed','cancelled') NOT NULL DEFAULT 'active',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  CONSTRAINT fk_nplans_member FOREIGN KEY (member_id) REFERENCES members(member_id)
+  CONSTRAINT fk_nutrition_plans_member FOREIGN KEY (member_id) REFERENCES members(member_id)
     ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT fk_nplans_coach FOREIGN KEY (coach_id) REFERENCES coaches(coach_id)
-    ON DELETE SET NULL ON UPDATE CASCADE,
-  INDEX idx_nplans_member (member_id)
+  CONSTRAINT fk_nutrition_plans_coach FOREIGN KEY (coach_id) REFERENCES coaches(coach_id)
+    ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------
--- Supplements (tied to a nutrition plan and/or member)
+-- Supplements (per member)
 -- -----------------------------------------------------------------------------
 CREATE TABLE supplements (
   supplement_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  nutrition_plan_id BIGINT UNSIGNED NULL,
   member_id BIGINT UNSIGNED NOT NULL,
-  name VARCHAR(120) NOT NULL,
-  dosage VARCHAR(80) NULL,
-  timing VARCHAR(80) NULL,
-  notes VARCHAR(255) NULL,
+  supplement_name VARCHAR(120) NOT NULL,
+  dose VARCHAR(80) NULL,
+  timing VARCHAR(120) NULL,
+  purpose VARCHAR(200) NULL,
+  active TINYINT(1) NOT NULL DEFAULT 1,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_supplements_nplan FOREIGN KEY (nutrition_plan_id) REFERENCES nutrition_plans(nutrition_plan_id)
-    ON DELETE SET NULL ON UPDATE CASCADE,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_supplements_member FOREIGN KEY (member_id) REFERENCES members(member_id)
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  INDEX idx_supplements_member (member_id)
+    ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------
@@ -342,40 +337,46 @@ CREATE TABLE supplements (
 CREATE TABLE retention_flags (
   flag_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   member_id BIGINT UNSIGNED NOT NULL,
-  flag_type ENUM('at_risk','no_show','payment_due','inactive','win_back') NOT NULL,
-  severity ENUM('low','medium','high') NOT NULL DEFAULT 'medium',
-  reason VARCHAR(255) NULL,
-  is_resolved TINYINT(1) NOT NULL DEFAULT 0,
-  raised_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  assessment_id BIGINT UNSIGNED NULL,
+  flag_type ENUM('low_attendance','no_show','payment_failed','injury','low_motivation','no_progress','low_response') NOT NULL,
+  severity ENUM('low','medium','high','critical') NOT NULL DEFAULT 'medium',
+  status ENUM('open','in_progress','resolved','dismissed') NOT NULL DEFAULT 'open',
+  detected_at DATETIME NOT NULL,
   resolved_at DATETIME NULL,
+  action_required TEXT NULL,
+  owner_coach_id BIGINT UNSIGNED NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_flags_member FOREIGN KEY (member_id) REFERENCES members(member_id)
     ON DELETE CASCADE ON UPDATE CASCADE,
-  INDEX idx_flags_member_resolved (member_id, is_resolved)
+  CONSTRAINT fk_flags_assessment FOREIGN KEY (assessment_id) REFERENCES assessments(assessment_id)
+    ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT fk_flags_owner FOREIGN KEY (owner_coach_id) REFERENCES coaches(coach_id)
+    ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------
--- Internal tasks (ops / CRM to-dos)
+-- Internal tasks (ops / CRM to-dos, often driven by a retention flag)
 -- -----------------------------------------------------------------------------
 CREATE TABLE tasks (
   task_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  title VARCHAR(150) NOT NULL,
-  description TEXT NULL,
-  assigned_to BIGINT UNSIGNED NULL,
   member_id BIGINT UNSIGNED NULL,
+  coach_id BIGINT UNSIGNED NULL,
+  flag_id BIGINT UNSIGNED NULL,
+  task_type ENUM('call','whatsapp','reassess','program_update','payment_followup','medical_referral','manager_review') NOT NULL,
   priority ENUM('low','medium','high','urgent') NOT NULL DEFAULT 'medium',
-  status ENUM('open','in_progress','done','cancelled') NOT NULL DEFAULT 'open',
-  due_date DATE NULL,
-  created_by BIGINT UNSIGNED NULL,
+  status ENUM('open','doing','done','cancelled') NOT NULL DEFAULT 'open',
+  due_at DATETIME NULL,
+  completed_at DATETIME NULL,
+  notes TEXT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  CONSTRAINT fk_tasks_assignee FOREIGN KEY (assigned_to) REFERENCES users(user_id)
-    ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT fk_tasks_member FOREIGN KEY (member_id) REFERENCES members(member_id)
     ON DELETE SET NULL ON UPDATE CASCADE,
-  CONSTRAINT fk_tasks_creator FOREIGN KEY (created_by) REFERENCES users(user_id)
+  CONSTRAINT fk_tasks_coach FOREIGN KEY (coach_id) REFERENCES coaches(coach_id)
     ON DELETE SET NULL ON UPDATE CASCADE,
-  INDEX idx_tasks_status_due (status, due_date)
+  CONSTRAINT fk_tasks_flag FOREIGN KEY (flag_id) REFERENCES retention_flags(flag_id)
+    ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------

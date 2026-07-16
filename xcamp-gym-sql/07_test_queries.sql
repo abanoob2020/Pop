@@ -35,7 +35,7 @@ SELECT '06. Coach roster (vw_coach_roster)' AS test;
 SELECT * FROM vw_coach_roster ORDER BY active_members DESC;
 
 SELECT '07. At-risk members (vw_at_risk_members)' AS test;
-SELECT * FROM vw_at_risk_members ORDER BY FIELD(severity,'high','medium','low');
+SELECT * FROM vw_at_risk_members ORDER BY FIELD(severity,'critical','high','medium','low');
 
 SELECT '08. Open follow-ups (vw_open_followups)' AS test;
 SELECT * FROM vw_open_followups ORDER BY due_date;
@@ -57,7 +57,7 @@ FROM memberships WHERE member_id = 3 ORDER BY membership_id;
 SELECT '11. sp_flag_member raises a flag and updates member status' AS test;
 CALL sp_flag_member(7, 'no_show', 'medium', 'Manual test flag');
 SELECT member_id, status FROM members WHERE member_id = 7;
-SELECT flag_type, severity, reason FROM retention_flags WHERE member_id = 7 ORDER BY flag_id DESC LIMIT 1;
+SELECT flag_type, severity, status, action_required FROM retention_flags WHERE member_id = 7 ORDER BY flag_id DESC LIMIT 1;
 
 SELECT '12. Audit log tail (written by triggers)' AS test;
 SELECT audit_id, entity_type, entity_id, action, created_at

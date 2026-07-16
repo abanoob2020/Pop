@@ -54,9 +54,9 @@ STARTS (TIMESTAMP(CURRENT_DATE) + INTERVAL 1 DAY + INTERVAL 3 HOUR)
 COMMENT 'Raise inactive retention flags for members absent 14+ days'
 DO
 BEGIN
-  INSERT INTO retention_flags (member_id, flag_type, severity, reason, raised_at)
-  SELECT m.member_id, 'inactive', 'medium',
-         'No attendance in the last 14 days', NOW()
+  INSERT INTO retention_flags (member_id, flag_type, severity, status, detected_at, action_required)
+  SELECT m.member_id, 'low_attendance', 'medium', 'open', NOW(),
+         'No attendance in the last 14 days'
   FROM members m
   WHERE m.status IN ('active','reactivated','upgraded','corrective')
     AND NOT EXISTS (
@@ -67,8 +67,8 @@ BEGIN
     AND NOT EXISTS (
       SELECT 1 FROM retention_flags rf
       WHERE rf.member_id = m.member_id
-        AND rf.flag_type = 'inactive'
-        AND rf.is_resolved = 0
+        AND rf.flag_type = 'low_attendance'
+        AND rf.status IN ('open','in_progress')
     );
 END$$
 

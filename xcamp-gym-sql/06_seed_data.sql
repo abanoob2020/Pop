@@ -173,47 +173,47 @@ INSERT INTO progress_tracking (member_id, log_date, weight_kg, waist_cm, chest_c
 -- -----------------------------------------------------------------------------
 -- Workout plans + sessions
 -- -----------------------------------------------------------------------------
-INSERT INTO workout_plans (workout_plan_id, member_id, coach_id, title, goal, start_date, end_date, is_active) VALUES
-  (1, 1, 1, 'Upper/Lower Hypertrophy', 'muscle_gain', DATE_SUB(CURRENT_DATE, INTERVAL 28 DAY), DATE_ADD(CURRENT_DATE, INTERVAL 30 DAY), 1),
-  (2, 2, 2, 'Fat Loss Circuit',        'fat_loss',    DATE_SUB(CURRENT_DATE, INTERVAL 24 DAY), DATE_ADD(CURRENT_DATE, INTERVAL 36 DAY), 1),
-  (3, 4, 4, 'Back Rehab & Core',       'rehab',       DATE_SUB(CURRENT_DATE, INTERVAL 18 DAY), DATE_ADD(CURRENT_DATE, INTERVAL 42 DAY), 1);
+INSERT INTO workout_plans (workout_plan_id, member_id, coach_id, goal_type, phase, start_date, end_date, status) VALUES
+  (1, 1, 1, 'muscle_gain', 'hypertrophy',   DATE_SUB(CURRENT_DATE, INTERVAL 28 DAY), DATE_ADD(CURRENT_DATE, INTERVAL 30 DAY), 'active'),
+  (2, 2, 2, 'fat_loss',    'stabilization', DATE_SUB(CURRENT_DATE, INTERVAL 24 DAY), DATE_ADD(CURRENT_DATE, INTERVAL 36 DAY), 'active'),
+  (3, 4, 4, 'rehab',       'corrective',    DATE_SUB(CURRENT_DATE, INTERVAL 18 DAY), DATE_ADD(CURRENT_DATE, INTERVAL 42 DAY), 'active');
 
-INSERT INTO workout_sessions (workout_plan_id, member_id, session_date, focus, duration_min, status, rpe) VALUES
-  (1, 1, DATE_SUB(CURRENT_DATE, INTERVAL 3 DAY), 'Push', 75, 'completed', 8),
-  (1, 1, DATE_SUB(CURRENT_DATE, INTERVAL 1 DAY), 'Pull', 70, 'completed', 7),
-  (1, 1, DATE_ADD(CURRENT_DATE, INTERVAL 1 DAY), 'Legs', NULL, 'scheduled', NULL),
-  (2, 2, DATE_SUB(CURRENT_DATE, INTERVAL 2 DAY), 'Full body circuit', 60, 'completed', 9),
-  (3, 4, DATE_SUB(CURRENT_DATE, INTERVAL 4 DAY), 'Mobility', 45, 'skipped', NULL);
+INSERT INTO workout_sessions (workout_plan_id, session_date, muscle_group, exercises, sets_info, reps_info, load_info, intensity_info, completion_status) VALUES
+  (1, DATE_SUB(CURRENT_DATE, INTERVAL 3 DAY), 'Chest/Shoulders/Triceps', 'Bench press; Overhead press; Dips', '4;3;3', '8-10;8-10;12', '80kg;45kg;BW', 'RPE 8',  'completed'),
+  (1, DATE_SUB(CURRENT_DATE, INTERVAL 1 DAY), 'Back/Biceps',             'Deadlift; Barbell row; Curls',     '3;4;3', '5;10;12',     '120kg;60kg;15kg', 'RPE 7', 'completed'),
+  (1, DATE_ADD(CURRENT_DATE, INTERVAL 1 DAY), 'Legs',                    'Squat; RDL; Leg press',            '4;3;3', '8;10;12',     'TBD', 'RPE 8',        'planned'),
+  (2, DATE_SUB(CURRENT_DATE, INTERVAL 2 DAY), 'Full body circuit',       'Circuit A x3 rounds',              '3',     '15',          'light', 'high',       'completed'),
+  (3, DATE_SUB(CURRENT_DATE, INTERVAL 4 DAY), 'Core/Mobility',           'McGill big 3; Cat-camel',          '3',     '30s hold',    'BW', 'low',           'missed');
 
 -- -----------------------------------------------------------------------------
 -- Nutrition plans + supplements
 -- -----------------------------------------------------------------------------
-INSERT INTO nutrition_plans (nutrition_plan_id, member_id, coach_id, title, calories_target, protein_g, carbs_g, fats_g, start_date, end_date, is_active) VALUES
-  (1, 2, 2, 'Cutting 1600', 1600, 130, 150, 45, DATE_SUB(CURRENT_DATE, INTERVAL 24 DAY), DATE_ADD(CURRENT_DATE, INTERVAL 36 DAY), 1),
-  (2, 1, 1, 'Lean Bulk 2900', 2900, 180, 320, 80, DATE_SUB(CURRENT_DATE, INTERVAL 28 DAY), DATE_ADD(CURRENT_DATE, INTERVAL 30 DAY), 1);
+INSERT INTO nutrition_plans (nutrition_plan_id, member_id, coach_id, calories, protein_g, fat_g, carbs_g, hydration_target_l, meal_timing, refeed_protocol, diet_break_protocol, status) VALUES
+  (1, 2, 2, 1600, 130.00, 45.00, 150.00, 2.50, '4 meals, protein at each',        'Weekly high-carb refeed on training day', 'Diet break at week 8', 'active'),
+  (2, 1, 1, 2900, 180.00, 80.00, 320.00, 3.50, '5 meals, carbs around training',  NULL,                                       NULL,                   'active');
 
-INSERT INTO supplements (nutrition_plan_id, member_id, name, dosage, timing, notes) VALUES
-  (1, 2, 'Whey Protein', '30g', 'Post-workout', NULL),
-  (2, 1, 'Creatine Monohydrate', '5g', 'Daily', 'Any time'),
-  (2, 1, 'Whey Protein', '40g', 'Post-workout / breakfast', NULL);
+INSERT INTO supplements (member_id, supplement_name, dose, timing, purpose, active) VALUES
+  (2, 'Whey Protein',        '30g', 'Post-workout',              'Hit daily protein target', 1),
+  (1, 'Creatine Monohydrate','5g',  'Daily, any time',           'Strength & size',          1),
+  (1, 'Whey Protein',        '40g', 'Post-workout / breakfast',  'Hit daily protein target', 1);
 
 -- -----------------------------------------------------------------------------
 -- Retention flags
 -- -----------------------------------------------------------------------------
-INSERT INTO retention_flags (member_id, flag_type, severity, reason, is_resolved, raised_at) VALUES
-  (8,  'at_risk',     'high',   'No attendance in 2 weeks after joining', 0, DATE_SUB(NOW(), INTERVAL 3 DAY)),
-  (11, 'win_back',    'medium', 'Membership expired ~6 months ago',       0, DATE_SUB(NOW(), INTERVAL 10 DAY)),
-  (12, 'payment_due', 'low',    'Frozen membership, balance pending',     0, DATE_SUB(NOW(), INTERVAL 7 DAY)),
-  (2,  'inactive',    'low',    'Old flag, since resolved',               1, DATE_SUB(NOW(), INTERVAL 40 DAY));
+INSERT INTO retention_flags (flag_id, member_id, flag_type, severity, status, detected_at, resolved_at, action_required, owner_coach_id) VALUES
+  (1, 8,  'low_attendance', 'high',   'open',        DATE_SUB(NOW(), INTERVAL 3 DAY),  NULL,                            'No attendance in 2 weeks after joining; call to re-engage', 2),
+  (2, 11, 'low_response',   'medium', 'open',        DATE_SUB(NOW(), INTERVAL 10 DAY), NULL,                            'Win-back: membership expired ~6 months ago',              1),
+  (3, 12, 'payment_failed', 'low',    'in_progress', DATE_SUB(NOW(), INTERVAL 7 DAY),  NULL,                            'Frozen membership, balance pending',                      2),
+  (4, 2,  'low_attendance', 'low',    'resolved',    DATE_SUB(NOW(), INTERVAL 40 DAY), DATE_SUB(NOW(), INTERVAL 30 DAY), 'Old flag, since resolved',                                2);
 
 -- -----------------------------------------------------------------------------
 -- Tasks
 -- -----------------------------------------------------------------------------
-INSERT INTO tasks (title, description, assigned_to, member_id, priority, status, due_date, created_by) VALUES
-  ('Call at-risk member Reem', 'Reactivation call', 4, 8, 'high', 'open', DATE_ADD(CURRENT_DATE, INTERVAL 1 DAY), 2),
-  ('Prepare quarterly revenue report', NULL, 2, NULL, 'medium', 'in_progress', DATE_ADD(CURRENT_DATE, INTERVAL 5 DAY), 1),
-  ('Order new dumbbells', 'Replace worn 20kg pairs', 5, NULL, 'low', 'open', DATE_ADD(CURRENT_DATE, INTERVAL 14 DAY), 2),
-  ('Follow up win-back Amr', NULL, 3, 11, 'medium', 'open', DATE_ADD(CURRENT_DATE, INTERVAL 3 DAY), 2);
+INSERT INTO tasks (member_id, coach_id, flag_id, task_type, priority, status, due_at, notes) VALUES
+  (8,    2,    1,    'call',             'high',   'open',  DATE_ADD(NOW(), INTERVAL 1 DAY),  'Reactivation call for Reem (low attendance)'),
+  (NULL, NULL, NULL, 'manager_review',   'medium', 'doing', DATE_ADD(NOW(), INTERVAL 5 DAY),  'Prepare quarterly revenue report'),
+  (12,   2,    3,    'payment_followup', 'medium', 'open',  DATE_ADD(NOW(), INTERVAL 2 DAY),  'Chase pending balance on frozen membership'),
+  (11,   1,    2,    'whatsapp',         'medium', 'open',  DATE_ADD(NOW(), INTERVAL 3 DAY),  'Win-back message to Amr');
 
 -- -----------------------------------------------------------------------------
 -- Messages log
