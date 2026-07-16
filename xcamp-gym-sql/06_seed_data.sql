@@ -1,244 +1,165 @@
 -- =============================================================================
 -- xcamp-gym-sql : 06_seed_data.sql
 -- -----------------------------------------------------------------------------
--- Deterministic sample data. Explicit primary keys keep foreign-key references
--- stable. Dates are expressed relative to CURRENT_DATE so the demo views
--- (expiring memberships, recent attendance, ...) return meaningful rows.
+-- Deterministic sample data with explicit primary keys. Loaded by run_all.sql
+-- BEFORE the triggers are created, so the explicit tasks/messages/flags/
+-- milestones rows below are not duplicated by trigger side effects.
 --
--- Passwords below are placeholder bcrypt-style hashes for demo only.
+-- Password hashes are placeholders for demo only.
 -- =============================================================================
 
 USE xcamp_gym;
 
--- Clear existing data (child-first) so seeding is repeatable.
-DELETE FROM audit_logs;
-DELETE FROM milestones;
-DELETE FROM messages_log;
-DELETE FROM tasks;
-DELETE FROM retention_flags;
-DELETE FROM supplements;
-DELETE FROM nutrition_plans;
-DELETE FROM workout_sessions;
-DELETE FROM workout_plans;
-DELETE FROM progress_tracking;
-DELETE FROM followups;
-DELETE FROM daily_attendance;
-DELETE FROM injury_history;
-DELETE FROM assessments;
-DELETE FROM payments;
-DELETE FROM memberships;
-DELETE FROM plans;
-DELETE FROM members;
-DELETE FROM coaches;
-DELETE FROM users;
+INSERT INTO users (user_id, full_name, email, phone, password_hash, role, is_active, last_login_at) VALUES
+(1, 'Admin One', 'admin@xcamp.com', '01000000001', 'hash_admin', 'admin', 1, NOW()),
+(2, 'Manager One', 'manager@xcamp.com', '01000000002', 'hash_manager', 'manager', 1, NOW()),
+(3, 'Coach Ahmed', 'coach1@xcamp.com', '01000000003', 'hash_coach1', 'coach', 1, NOW()),
+(4, 'Coach Sara', 'coach2@xcamp.com', '01000000004', 'hash_coach2', 'coach', 1, NOW());
 
--- -----------------------------------------------------------------------------
--- Users (staff)
--- -----------------------------------------------------------------------------
-INSERT INTO users (user_id, full_name, email, phone, password_hash, role) VALUES
-  (1, 'Sara Admin',      'admin@xcamp.gym',    '01000000001', '$2y$10$demoDEMOdemoDEMOdemoDE01', 'admin'),
-  (2, 'Omar Manager',    'manager@xcamp.gym',  '01000000002', '$2y$10$demoDEMOdemoDEMOdemoDE02', 'manager'),
-  (3, 'Karim Coach',     'karim@xcamp.gym',    '01000000003', '$2y$10$demoDEMOdemoDEMOdemoDE03', 'coach'),
-  (4, 'Mona Coach',      'mona@xcamp.gym',     '01000000004', '$2y$10$demoDEMOdemoDEMOdemoDE04', 'coach'),
-  (5, 'Reception Desk',  'front@xcamp.gym',    '01000000005', '$2y$10$demoDEMOdemoDEMOdemoDE05', 'reception');
-
--- -----------------------------------------------------------------------------
--- Coaches
--- -----------------------------------------------------------------------------
 INSERT INTO coaches (coach_id, user_id, full_name, phone, specialty, active) VALUES
-  (1, 3, 'Karim Coach', '01000000003', 'Strength & Conditioning', 1),
-  (2, 4, 'Mona Coach',  '01000000004', 'Weight Loss & Nutrition', 1),
-  (3, NULL, 'Youssef Trainer', '01000000013', 'Bodybuilding', 1),
-  (4, NULL, 'Lina Trainer',    '01000000014', 'Mobility & Rehab', 1),
-  (5, NULL, 'Hassan Trainer',  '01000000015', 'Functional Training', 0);
+(1, 3, 'Coach Ahmed', '01000000003', 'strength & fat loss', 1),
+(2, 4, 'Coach Sara', '01000000004', 'mobility & rehab', 1);
 
--- -----------------------------------------------------------------------------
--- Plans
--- -----------------------------------------------------------------------------
-INSERT INTO plans (plan_id, name, description, price, duration_days, sessions_per_week, plan_type, is_active) VALUES
-  (1, 'Monthly Basic',    'Gym access, 30 days',              500.00,  30, NULL, 'monthly',   1),
-  (2, 'Quarterly',        'Gym access, 90 days',              1350.00, 90, NULL, 'quarterly', 1),
-  (3, 'Half Year',        'Gym access, 180 days',             2400.00, 180, NULL, 'half_year', 1),
-  (4, 'Annual',           'Gym access, 365 days',             4200.00, 365, NULL, 'annual',    1),
-  (5, 'PT 12 Sessions',   'Personal training, 12 sessions',   1800.00, 45,  3,    'pt',        1),
-  (6, 'Online Coaching',  'Remote programming, 30 days',      700.00,  30,  NULL, 'online',    1);
+INSERT INTO plans (plan_id, plan_name, duration_days, price, access_level, active) VALUES
+(1, 'Monthly Basic', 30, 1200.00, 'basic', 1),
+(2, 'Quarterly Pro', 90, 3000.00, 'pro', 1),
+(3, 'Yearly Elite', 365, 9000.00, 'elite', 1);
 
--- -----------------------------------------------------------------------------
--- Members (mix of statuses; coach assignments)
--- -----------------------------------------------------------------------------
-INSERT INTO members (member_id, full_name, gender, birth_date, phone, email, join_date, status, preferred_time, goal_summary, coach_id) VALUES
-  (1,  'Ahmed Hassan',   'male',   '1992-04-11', '01100000001', 'ahmed@example.com',   DATE_SUB(CURRENT_DATE, INTERVAL 400 DAY), 'active',      'evening', 'Build muscle',        1),
-  (2,  'Nour Ali',       'female', '1995-09-23', '01100000002', 'nour@example.com',    DATE_SUB(CURRENT_DATE, INTERVAL 200 DAY), 'active',      'morning', 'Lose 8kg',            2),
-  (3,  'Mohamed Adel',   'male',   '1988-01-05', '01100000003', 'mohamed@example.com', DATE_SUB(CURRENT_DATE, INTERVAL 120 DAY), 'active',      'evening', 'Strength',            1),
-  (4,  'Salma Tarek',    'female', '2000-12-30', '01100000004', 'salma@example.com',   DATE_SUB(CURRENT_DATE, INTERVAL 90 DAY),  'corrective',  'noon',    'Posture / back pain', 4),
-  (5,  'Youssef Sami',   'male',   '1990-07-19', '01100000005', 'youssefs@example.com',DATE_SUB(CURRENT_DATE, INTERVAL 60 DAY),  'active',      'evening', 'Recomp',              3),
-  (6,  'Habiba Ezz',     'female', '1997-03-14', '01100000006', 'habiba@example.com',  DATE_SUB(CURRENT_DATE, INTERVAL 45 DAY),  'onboarding',  'morning', 'General fitness',     2),
-  (7,  'Khaled Fathy',   'male',   '1985-11-02', '01100000007', 'khaled@example.com',  DATE_SUB(CURRENT_DATE, INTERVAL 30 DAY),  'active',      'evening', 'Fat loss',            1),
-  (8,  'Reem Adham',     'female', '1999-06-08', '01100000008', 'reem@example.com',    DATE_SUB(CURRENT_DATE, INTERVAL 25 DAY),  'at_risk',     'noon',    'Toning',              2),
-  (9,  'Tarek Nabil',    'male',   '1993-02-27', '01100000009', 'tarek@example.com',   DATE_SUB(CURRENT_DATE, INTERVAL 20 DAY),  'active',      'evening', 'Bulk',                3),
-  (10, 'Farida Gamal',   'female', '2001-08-17', '01100000010', 'farida@example.com',  DATE_SUB(CURRENT_DATE, INTERVAL 15 DAY),  'active',      'morning', 'Endurance',           4),
-  (11, 'Amr Sayed',      'male',   '1987-05-21', '01100000011', 'amr@example.com',     DATE_SUB(CURRENT_DATE, INTERVAL 220 DAY), 'expired',     'evening', 'Return to training',  1),
-  (12, 'Dina Wael',      'female', '1994-10-10', '01100000012', 'dina@example.com',    DATE_SUB(CURRENT_DATE, INTERVAL 300 DAY), 'paused',      'morning', 'Postpartum',          2),
-  (13, 'Sherif Magdy',   'male',   '1991-12-01', '01100000016', 'sherif@example.com',  DATE_SUB(CURRENT_DATE, INTERVAL 10 DAY),  'new',         'evening', 'Start lifting',       NULL),
-  (14, 'Yara Fouad',     'female', '1996-04-04', '01100000017', 'yara@example.com',    DATE_SUB(CURRENT_DATE, INTERVAL 500 DAY), 'reactivated', 'noon',    'Get back in shape',   3),
-  (15, 'Marwan Hesham',  'male',   '1989-09-09', '01100000018', 'marwan@example.com',  DATE_SUB(CURRENT_DATE, INTERVAL 80 DAY),  'upgraded',    'evening', 'Powerlifting',        1);
+INSERT INTO members
+(member_id, full_name, gender, birth_date, phone, email, address, job_title, join_date, status, preferred_time, goal_summary, coach_id, notes)
+VALUES
+(1, 'Omar Khaled', 'male', '1996-04-12', '01111111101', 'omar@x.com', 'Giza', 'Engineer', '2026-07-01', 'new', 'evening', 'fat loss', 1, 'new trial member'),
+(2, 'Mona Ali', 'female', '1999-09-20', '01111111102', 'mona@x.com', 'Cairo', 'Designer', '2026-06-20', 'active', 'morning', 'muscle gain', 1, 'consistent member'),
+(3, 'Youssef Tarek', 'male', '1992-01-08', '01111111103', 'youssef@x.com', 'Nasr City', 'Sales', '2026-05-15', 'at_risk', 'evening', 'general fitness', 2, 'low attendance recently'),
+(4, 'Dina Mahmoud', 'female', '1994-11-02', '01111111104', 'dina@x.com', 'Heliopolis', 'Teacher', '2026-04-10', 'paused', 'morning', 'rehab', 2, 'knee issue'),
+(5, 'Hassan Nabil', 'male', '1988-07-22', '01111111105', 'hassan@x.com', '6th October', 'Doctor', '2026-03-05', 'active', 'night', 'strength', 1, 'high performer');
 
--- -----------------------------------------------------------------------------
--- Memberships (end_date chosen to exercise the "expiring soon" / expired views)
--- -----------------------------------------------------------------------------
-INSERT INTO memberships (membership_id, member_id, plan_id, start_date, end_date, status, price_paid, sessions_total, sessions_used, auto_renew) VALUES
-  (1,  1,  4, DATE_SUB(CURRENT_DATE, INTERVAL 30 DAY),  DATE_ADD(CURRENT_DATE, INTERVAL 335 DAY), 'active',   4200.00, NULL, 0, 1),
-  (2,  2,  2, DATE_SUB(CURRENT_DATE, INTERVAL 80 DAY),  DATE_ADD(CURRENT_DATE, INTERVAL 10 DAY),  'active',   1350.00, NULL, 0, 0),
-  (3,  3,  1, DATE_SUB(CURRENT_DATE, INTERVAL 25 DAY),  DATE_ADD(CURRENT_DATE, INTERVAL 5 DAY),   'active',   500.00,  NULL, 0, 0),
-  (4,  4,  5, DATE_SUB(CURRENT_DATE, INTERVAL 20 DAY),  DATE_ADD(CURRENT_DATE, INTERVAL 25 DAY),  'active',   1800.00, 12,   4, 0),
-  (5,  5,  2, DATE_SUB(CURRENT_DATE, INTERVAL 60 DAY),  DATE_ADD(CURRENT_DATE, INTERVAL 30 DAY),  'active',   1350.00, NULL, 0, 0),
-  (6,  6,  1, DATE_SUB(CURRENT_DATE, INTERVAL 12 DAY),  DATE_ADD(CURRENT_DATE, INTERVAL 18 DAY),  'active',   500.00,  NULL, 0, 0),
-  (7,  7,  1, DATE_SUB(CURRENT_DATE, INTERVAL 8 DAY),   DATE_ADD(CURRENT_DATE, INTERVAL 22 DAY),  'active',   500.00,  NULL, 0, 0),
-  (8,  8,  1, DATE_SUB(CURRENT_DATE, INTERVAL 25 DAY),  DATE_ADD(CURRENT_DATE, INTERVAL 5 DAY),   'active',   500.00,  NULL, 0, 0),
-  (9,  9,  3, DATE_SUB(CURRENT_DATE, INTERVAL 20 DAY),  DATE_ADD(CURRENT_DATE, INTERVAL 160 DAY), 'active',   2400.00, NULL, 0, 1),
-  (10, 10, 6, DATE_SUB(CURRENT_DATE, INTERVAL 15 DAY),  DATE_ADD(CURRENT_DATE, INTERVAL 15 DAY),  'active',   700.00,  NULL, 0, 0),
-  (11, 11, 1, DATE_SUB(CURRENT_DATE, INTERVAL 220 DAY), DATE_SUB(CURRENT_DATE, INTERVAL 190 DAY), 'expired',  500.00,  NULL, 0, 0),
-  (12, 12, 2, DATE_SUB(CURRENT_DATE, INTERVAL 300 DAY), DATE_SUB(CURRENT_DATE, INTERVAL 210 DAY), 'frozen',   1350.00, NULL, 0, 0),
-  (14, 14, 4, DATE_SUB(CURRENT_DATE, INTERVAL 5 DAY),   DATE_ADD(CURRENT_DATE, INTERVAL 360 DAY), 'active',   4200.00, NULL, 0, 1),
-  (15, 15, 3, DATE_SUB(CURRENT_DATE, INTERVAL 40 DAY),  DATE_ADD(CURRENT_DATE, INTERVAL 140 DAY), 'active',   2400.00, NULL, 0, 0);
+INSERT INTO memberships
+(membership_id, member_id, plan_id, start_date, end_date, renewal_status, payment_status, auto_renew)
+VALUES
+(1, 1, 1, '2026-07-01', '2026-07-31', 'pending', 'unpaid', 0),
+(2, 2, 2, '2026-06-20', '2026-09-18', 'pending', 'paid', 1),
+(3, 3, 1, '2026-05-15', '2026-06-14', 'expired', 'failed', 0),
+(4, 4, 2, '2026-04-10', '2026-07-09', 'pending', 'partial', 0),
+(5, 5, 3, '2026-03-05', '2027-03-04', 'renewed', 'paid', 1);
 
--- -----------------------------------------------------------------------------
--- Payments
--- -----------------------------------------------------------------------------
-INSERT INTO payments (member_id, membership_id, amount, method, status, paid_at, reference) VALUES
-  (1,  1,  4200.00, 'card',     'paid', DATE_SUB(NOW(), INTERVAL 30 DAY), 'INV-1001'),
-  (2,  2,  1350.00, 'cash',     'paid', DATE_SUB(NOW(), INTERVAL 80 DAY), 'INV-1002'),
-  (3,  3,  500.00,  'cash',     'paid', DATE_SUB(NOW(), INTERVAL 25 DAY), 'INV-1003'),
-  (4,  4,  1800.00, 'transfer', 'paid', DATE_SUB(NOW(), INTERVAL 20 DAY), 'INV-1004'),
-  (5,  5,  1350.00, 'card',     'paid', DATE_SUB(NOW(), INTERVAL 60 DAY), 'INV-1005'),
-  (6,  6,  500.00,  'online',   'paid', DATE_SUB(NOW(), INTERVAL 12 DAY), 'INV-1006'),
-  (7,  7,  500.00,  'cash',     'paid', DATE_SUB(NOW(), INTERVAL 8 DAY),  'INV-1007'),
-  (8,  8,  500.00,  'cash',     'paid', DATE_SUB(NOW(), INTERVAL 25 DAY), 'INV-1008'),
-  (9,  9,  2400.00, 'card',     'paid', DATE_SUB(NOW(), INTERVAL 20 DAY), 'INV-1009'),
-  (10, 10, 700.00,  'online',   'paid', DATE_SUB(NOW(), INTERVAL 15 DAY), 'INV-1010'),
-  (11, 11, 500.00,  'cash',     'paid', DATE_SUB(NOW(), INTERVAL 220 DAY),'INV-1011'),
-  (14, 14, 4200.00, 'card',     'paid', DATE_SUB(NOW(), INTERVAL 5 DAY),  'INV-1014'),
-  (15, 15, 2400.00, 'transfer', 'paid', DATE_SUB(NOW(), INTERVAL 40 DAY), 'INV-1015'),
-  (4,  NULL, 200.00, 'cash',    'pending', DATE_SUB(NOW(), INTERVAL 2 DAY),'INV-1099');
+INSERT INTO payments
+(payment_id, member_id, membership_id, payment_date, amount, method, status, receipt_no, reference_no, notes)
+VALUES
+(1, 2, 2, '2026-06-20 10:00:00', 3000.00, 'card', 'paid', 'R-1001', 'TX-2001', 'quarterly payment'),
+(2, 3, 3, '2026-05-15 09:15:00', 1200.00, 'cash', 'failed', 'R-1002', 'TX-2002', 'payment failed'),
+(3, 4, 4, '2026-04-10 08:45:00', 1500.00, 'bank_transfer', 'partial', 'R-1003', 'TX-2003', 'partial payment'),
+(4, 5, 5, '2026-03-05 07:30:00', 9000.00, 'card', 'paid', 'R-1004', 'TX-2004', 'yearly elite payment');
 
--- -----------------------------------------------------------------------------
--- Assessments
--- -----------------------------------------------------------------------------
-INSERT INTO assessments (member_id, coach_id, assessed_on, weight_kg, height_cm, body_fat_pct, muscle_mass_kg, bmi, resting_hr, notes) VALUES
-  (1, 1, DATE_SUB(CURRENT_DATE, INTERVAL 30 DAY), 82.50, 178.0, 18.20, 35.10, 26.04, 62, 'Baseline'),
-  (2, 2, DATE_SUB(CURRENT_DATE, INTERVAL 25 DAY), 70.00, 165.0, 30.10, 24.30, 25.71, 70, 'Weight-loss start'),
-  (4, 4, DATE_SUB(CURRENT_DATE, INTERVAL 18 DAY), 58.00, 160.0, 24.00, 22.00, 22.66, 68, 'Back pain, mobility limited'),
-  (9, 3, DATE_SUB(CURRENT_DATE, INTERVAL 10 DAY), 75.00, 180.0, 15.00, 34.00, 23.15, 58, 'Lean bulk baseline');
+INSERT INTO assessments
+(assessment_id, member_id, coach_id, assessment_date, parq_risk_count, overhead_squat_score, posture_score, movement_score, risk_score, classification, recommendation, next_review_date)
+VALUES
+(1, 1, 1, '2026-07-01 18:00:00', 0, 2.5, 2.0, 2.4, 45.0, 'good', 'general fat loss plan', '2026-07-15'),
+(2, 2, 1, '2026-06-20 09:00:00', 0, 2.8, 2.7, 2.9, 20.0, 'excellent', 'hypertrophy plan', '2026-07-20'),
+(3, 3, 2, '2026-06-01 17:00:00', 2, 1.4, 1.6, 1.8, 68.0, 'high_risk', 'mobility + corrective work', '2026-06-15'),
+(4, 4, 2, '2026-04-10 10:00:00', 3, 1.2, 1.3, 1.1, 82.0, 'critical', 'paused, medical clearance required', '2026-04-24'),
+(5, 5, 1, '2026-06-25 19:00:00', 0, 2.9, 2.8, 2.7, 18.0, 'excellent', 'strength progression plan', '2026-07-25');
 
--- -----------------------------------------------------------------------------
--- Injury history
--- -----------------------------------------------------------------------------
-INSERT INTO injury_history (member_id, injury_type, body_part, severity, occurred_on, resolved_on, notes) VALUES
-  (4, 'Lower back strain', 'Lumbar', 'moderate', DATE_SUB(CURRENT_DATE, INTERVAL 100 DAY), NULL, 'Avoid heavy deadlifts'),
-  (1, 'Shoulder impingement', 'Right shoulder', 'mild', DATE_SUB(CURRENT_DATE, INTERVAL 200 DAY), DATE_SUB(CURRENT_DATE, INTERVAL 150 DAY), 'Resolved with rehab');
+INSERT INTO injury_history
+(injury_id, member_id, injury_date, body_area, injury_type, severity, current_status, doctor_clearance, notes)
+VALUES
+(1, 4, '2026-04-09', 'knee', 'tendon irritation', 'high', 'recovering', 0, 'avoid deep knee flexion'),
+(2, 3, '2026-06-10', 'lower back', 'strain', 'medium', 'recovering', 0, 'reduce axial loading');
 
--- -----------------------------------------------------------------------------
--- Daily attendance (recent, to feed the 30-day view)
--- -----------------------------------------------------------------------------
-INSERT INTO daily_attendance (member_id, attend_date, check_in_at, check_out_at, source) VALUES
-  (1, DATE_SUB(CURRENT_DATE, INTERVAL 1 DAY),  DATE_SUB(NOW(), INTERVAL 1 DAY),  NULL, 'kiosk'),
-  (1, DATE_SUB(CURRENT_DATE, INTERVAL 3 DAY),  DATE_SUB(NOW(), INTERVAL 3 DAY),  DATE_SUB(NOW(), INTERVAL 3 DAY) + INTERVAL 90 MINUTE, 'kiosk'),
-  (1, DATE_SUB(CURRENT_DATE, INTERVAL 5 DAY),  DATE_SUB(NOW(), INTERVAL 5 DAY),  NULL, 'app'),
-  (2, DATE_SUB(CURRENT_DATE, INTERVAL 2 DAY),  DATE_SUB(NOW(), INTERVAL 2 DAY),  NULL, 'kiosk'),
-  (2, DATE_SUB(CURRENT_DATE, INTERVAL 6 DAY),  DATE_SUB(NOW(), INTERVAL 6 DAY),  NULL, 'kiosk'),
-  (3, DATE_SUB(CURRENT_DATE, INTERVAL 1 DAY),  DATE_SUB(NOW(), INTERVAL 1 DAY),  NULL, 'manual'),
-  (5, DATE_SUB(CURRENT_DATE, INTERVAL 4 DAY),  DATE_SUB(NOW(), INTERVAL 4 DAY),  NULL, 'kiosk'),
-  (7, DATE_SUB(CURRENT_DATE, INTERVAL 2 DAY),  DATE_SUB(NOW(), INTERVAL 2 DAY),  NULL, 'kiosk'),
-  (9, DATE_SUB(CURRENT_DATE, INTERVAL 1 DAY),  DATE_SUB(NOW(), INTERVAL 1 DAY),  NULL, 'app'),
-  (10, DATE_SUB(CURRENT_DATE, INTERVAL 3 DAY), DATE_SUB(NOW(), INTERVAL 3 DAY),  NULL, 'kiosk');
+INSERT INTO daily_attendance
+(attendance_id, member_id, coach_id, attendance_date, check_in_time, check_out_time, attended, session_type, notes)
+VALUES
+(1, 1, 1, '2026-07-01', '18:05:00', '19:10:00', 1, 'training', 'first day'),
+(2, 1, 1, '2026-07-02', NULL, NULL, 0, 'training', 'no show'),
+(3, 1, 1, '2026-07-03', NULL, NULL, 0, 'training', 'no show'),
+(4, 1, 1, '2026-07-04', NULL, NULL, 0, 'training', 'no show'),
+(5, 2, 1, '2026-07-01', '08:10:00', '09:15:00', 1, 'training', 'good session'),
+(6, 3, 2, '2026-06-28', '17:20:00', '18:00:00', 1, 'training', 'light session'),
+(7, 3, 2, '2026-07-01', NULL, NULL, 0, 'training', 'no show'),
+(8, 3, 2, '2026-07-03', NULL, NULL, 0, 'training', 'no show'),
+(9, 5, 1, '2026-07-02', '21:00:00', '22:15:00', 1, 'training', 'strong session');
 
--- -----------------------------------------------------------------------------
--- Follow-ups
--- -----------------------------------------------------------------------------
-INSERT INTO followups (member_id, coach_id, due_date, channel, status, outcome, notes) VALUES
-  (8,  2, DATE_SUB(CURRENT_DATE, INTERVAL 2 DAY), 'call',     'pending', NULL, 'Missed last 2 weeks'),
-  (6,  2, DATE_ADD(CURRENT_DATE, INTERVAL 1 DAY), 'whatsapp', 'pending', NULL, 'Onboarding check-in'),
-  (11, 1, DATE_ADD(CURRENT_DATE, INTERVAL 3 DAY), 'call',     'pending', NULL, 'Win-back offer'),
-  (2,  2, DATE_SUB(CURRENT_DATE, INTERVAL 5 DAY), 'email',    'done',    'Renewed for another quarter', 'Positive');
+INSERT INTO followups
+(followup_id, member_id, coach_id, followup_date, reason, contact_channel, response_status, action_taken, next_followup_date)
+VALUES
+(1, 1, 1, '2026-07-05 12:00:00', 'no_show', 'whatsapp', 'no_response', 'Sent reminder', '2026-07-06 12:00:00'),
+(2, 3, 2, '2026-07-04 11:00:00', 'low_attendance', 'call', 'replied', 'Member promised return', '2026-07-07 11:00:00'),
+(3, 4, 2, '2026-04-11 10:00:00', 'injury', 'whatsapp', 'escalated', 'Requested medical clearance', '2026-04-15 10:00:00'),
+(4, 5, 1, '2026-07-03 13:00:00', 'progress_review', 'in_person', 'converted', 'Discussed upgrade', NULL);
 
--- -----------------------------------------------------------------------------
--- Progress tracking
--- -----------------------------------------------------------------------------
-INSERT INTO progress_tracking (member_id, log_date, weight_kg, waist_cm, chest_cm, arm_cm, notes) VALUES
-  (2, DATE_SUB(CURRENT_DATE, INTERVAL 25 DAY), 70.00, 82.0, 95.0, 28.0, 'Start'),
-  (2, DATE_SUB(CURRENT_DATE, INTERVAL 5 DAY),  67.50, 79.0, 94.0, 28.5, 'Down 2.5kg'),
-  (1, DATE_SUB(CURRENT_DATE, INTERVAL 20 DAY), 82.50, 85.0, 104.0, 38.0, 'Baseline'),
-  (1, DATE_SUB(CURRENT_DATE, INTERVAL 2 DAY),  84.00, 85.0, 106.0, 39.0, 'Gaining');
+INSERT INTO progress_tracking
+(progress_id, member_id, record_date, weight, body_fat, muscle_mass, waist, chest, hips, performance_note, photo_ref)
+VALUES
+(1, 1, '2026-07-01', 92.5, 28.0, 32.0, 96.0, 104.0, 102.0, 'baseline', NULL),
+(2, 1, '2026-07-08', 90.1, 27.2, 32.5, 94.5, 104.5, 101.0, 'good drop', NULL),
+(3, 2, '2026-06-20', 61.0, 24.0, 25.0, 71.0, 88.0, 92.0, 'baseline', NULL),
+(4, 2, '2026-07-10', 61.5, 23.5, 25.6, 70.5, 88.5, 92.0, 'slight improvement', NULL),
+(5, 5, '2026-06-25', 84.0, 16.0, 38.5, 84.0, 112.0, 100.0, 'excellent base', NULL),
+(6, 5, '2026-07-10', 83.0, 15.2, 39.1, 83.0, 113.0, 99.5, 'progressing', NULL);
 
--- -----------------------------------------------------------------------------
--- Workout plans + sessions
--- -----------------------------------------------------------------------------
-INSERT INTO workout_plans (workout_plan_id, member_id, coach_id, goal_type, phase, start_date, end_date, status) VALUES
-  (1, 1, 1, 'muscle_gain', 'hypertrophy',   DATE_SUB(CURRENT_DATE, INTERVAL 28 DAY), DATE_ADD(CURRENT_DATE, INTERVAL 30 DAY), 'active'),
-  (2, 2, 2, 'fat_loss',    'stabilization', DATE_SUB(CURRENT_DATE, INTERVAL 24 DAY), DATE_ADD(CURRENT_DATE, INTERVAL 36 DAY), 'active'),
-  (3, 4, 4, 'rehab',       'corrective',    DATE_SUB(CURRENT_DATE, INTERVAL 18 DAY), DATE_ADD(CURRENT_DATE, INTERVAL 42 DAY), 'active');
+INSERT INTO workout_plans
+(workout_plan_id, member_id, coach_id, goal_type, phase, start_date, end_date, status, notes)
+VALUES
+(1, 1, 1, 'fat_loss', 'corrective', '2026-07-01', '2026-07-31', 'active', 'entry plan'),
+(2, 2, 1, 'muscle_gain', 'hypertrophy', '2026-06-20', '2026-09-18', 'active', 'split hypertrophy'),
+(3, 3, 2, 'rehab', 'stabilization', '2026-06-01', '2026-06-30', 'paused', 'back pain protocol'),
+(4, 4, 2, 'rehab', 'corrective', '2026-04-10', '2026-07-09', 'paused', 'knee rehab'),
+(5, 5, 1, 'strength', 'strength', '2026-03-05', '2027-03-04', 'active', 'advanced program');
 
-INSERT INTO workout_sessions (workout_plan_id, session_date, muscle_group, exercises, sets_info, reps_info, load_info, intensity_info, completion_status) VALUES
-  (1, DATE_SUB(CURRENT_DATE, INTERVAL 3 DAY), 'Chest/Shoulders/Triceps', 'Bench press; Overhead press; Dips', '4;3;3', '8-10;8-10;12', '80kg;45kg;BW', 'RPE 8',  'completed'),
-  (1, DATE_SUB(CURRENT_DATE, INTERVAL 1 DAY), 'Back/Biceps',             'Deadlift; Barbell row; Curls',     '3;4;3', '5;10;12',     '120kg;60kg;15kg', 'RPE 7', 'completed'),
-  (1, DATE_ADD(CURRENT_DATE, INTERVAL 1 DAY), 'Legs',                    'Squat; RDL; Leg press',            '4;3;3', '8;10;12',     'TBD', 'RPE 8',        'planned'),
-  (2, DATE_SUB(CURRENT_DATE, INTERVAL 2 DAY), 'Full body circuit',       'Circuit A x3 rounds',              '3',     '15',          'light', 'high',       'completed'),
-  (3, DATE_SUB(CURRENT_DATE, INTERVAL 4 DAY), 'Core/Mobility',           'McGill big 3; Cat-camel',          '3',     '30s hold',    'BW', 'low',           'missed');
+INSERT INTO workout_sessions
+(session_id, workout_plan_id, session_date, muscle_group, exercises, sets_info, reps_info, load_info, intensity_info, completion_status, notes)
+VALUES
+(1, 1, '2026-07-01', 'full body', 'squat, row, press', '3', '12', 'light', 'moderate', 'completed', 'intro day'),
+(2, 1, '2026-07-03', 'lower', 'goblet squat, lunge', '3', '10', 'light', 'moderate', 'partial', 'missed finisher'),
+(3, 2, '2026-07-01', 'chest', 'bench, fly', '4', '10', 'moderate', 'high', 'completed', 'solid session'),
+(4, 5, '2026-07-02', 'back', 'deadlift, row', '5', '5', 'heavy', 'high', 'completed', 'strong lifts');
 
--- -----------------------------------------------------------------------------
--- Nutrition plans + supplements
--- -----------------------------------------------------------------------------
-INSERT INTO nutrition_plans (nutrition_plan_id, member_id, coach_id, calories, protein_g, fat_g, carbs_g, hydration_target_l, meal_timing, refeed_protocol, diet_break_protocol, status) VALUES
-  (1, 2, 2, 1600, 130.00, 45.00, 150.00, 2.50, '4 meals, protein at each',        'Weekly high-carb refeed on training day', 'Diet break at week 8', 'active'),
-  (2, 1, 1, 2900, 180.00, 80.00, 320.00, 3.50, '5 meals, carbs around training',  NULL,                                       NULL,                   'active');
+INSERT INTO nutrition_plans
+(nutrition_plan_id, member_id, coach_id, calories, protein_g, fat_g, carbs_g, hydration_target_l, meal_timing, refeed_protocol, diet_break_protocol, status)
+VALUES
+(1, 1, 1, 2200, 180.0, 70.0, 210.0, 3.00, '3 meals + 1 snack', 'every 10 days', 'every 8 weeks', 'active'),
+(2, 2, 1, 2400, 170.0, 75.0, 250.0, 2.80, '4 meals', 'none', 'none', 'active'),
+(3, 5, 1, 3200, 210.0, 90.0, 360.0, 4.00, 'pre/post training split', 'none', 'none', 'active');
 
-INSERT INTO supplements (member_id, supplement_name, dose, timing, purpose, active) VALUES
-  (2, 'Whey Protein',        '30g', 'Post-workout',              'Hit daily protein target', 1),
-  (1, 'Creatine Monohydrate','5g',  'Daily, any time',           'Strength & size',          1),
-  (1, 'Whey Protein',        '40g', 'Post-workout / breakfast',  'Hit daily protein target', 1);
+INSERT INTO supplements
+(supplement_id, member_id, supplement_name, dose, timing, purpose, active)
+VALUES
+(1, 1, 'Whey Protein', '1 scoop', 'post workout', 'protein support', 1),
+(2, 1, 'Creatine', '5 g', 'daily', 'strength support', 1),
+(3, 2, 'Creatine', '5 g', 'daily', 'performance', 1),
+(4, 5, 'Omega 3', '2 caps', 'with meals', 'recovery', 1);
 
--- -----------------------------------------------------------------------------
--- Retention flags
--- -----------------------------------------------------------------------------
-INSERT INTO retention_flags (flag_id, member_id, flag_type, severity, status, detected_at, resolved_at, action_required, owner_coach_id) VALUES
-  (1, 8,  'low_attendance', 'high',   'open',        DATE_SUB(NOW(), INTERVAL 3 DAY),  NULL,                            'No attendance in 2 weeks after joining; call to re-engage', 2),
-  (2, 11, 'low_response',   'medium', 'open',        DATE_SUB(NOW(), INTERVAL 10 DAY), NULL,                            'Win-back: membership expired ~6 months ago',              1),
-  (3, 12, 'payment_failed', 'low',    'in_progress', DATE_SUB(NOW(), INTERVAL 7 DAY),  NULL,                            'Frozen membership, balance pending',                      2),
-  (4, 2,  'low_attendance', 'low',    'resolved',    DATE_SUB(NOW(), INTERVAL 40 DAY), DATE_SUB(NOW(), INTERVAL 30 DAY), 'Old flag, since resolved',                                2);
+INSERT INTO retention_flags
+(flag_id, member_id, assessment_id, flag_type, severity, status, detected_at, resolved_at, action_required, owner_coach_id)
+VALUES
+(1, 1, 1, 'low_attendance', 'high', 'open', '2026-07-04 20:00:00', NULL, 'Follow up after 3 no-shows', 1),
+(2, 3, 3, 'no_progress', 'high', 'open', '2026-07-03 19:00:00', NULL, 'Corrective plan needed', 2),
+(3, 4, 4, 'injury', 'critical', 'open', '2026-04-10 11:00:00', NULL, 'Medical clearance required', 2);
 
--- -----------------------------------------------------------------------------
--- Tasks
--- -----------------------------------------------------------------------------
-INSERT INTO tasks (member_id, coach_id, flag_id, task_type, priority, status, due_at, notes) VALUES
-  (8,    2,    1,    'call',             'high',   'open',  DATE_ADD(NOW(), INTERVAL 1 DAY),  'Reactivation call for Reem (low attendance)'),
-  (NULL, NULL, NULL, 'manager_review',   'medium', 'doing', DATE_ADD(NOW(), INTERVAL 5 DAY),  'Prepare quarterly revenue report'),
-  (12,   2,    3,    'payment_followup', 'medium', 'open',  DATE_ADD(NOW(), INTERVAL 2 DAY),  'Chase pending balance on frozen membership'),
-  (11,   1,    2,    'whatsapp',         'medium', 'open',  DATE_ADD(NOW(), INTERVAL 3 DAY),  'Win-back message to Amr');
+INSERT INTO tasks
+(task_id, member_id, coach_id, flag_id, task_type, priority, status, due_at, completed_at, notes)
+VALUES
+(1, 1, 1, 1, 'call', 'urgent', 'open', '2026-07-05 12:00:00', NULL, 'Call member now'),
+(2, 3, 2, 2, 'program_update', 'high', 'open', '2026-07-04 18:00:00', NULL, 'Update plan'),
+(3, 4, 2, 3, 'medical_referral', 'urgent', 'open', '2026-04-10 12:00:00', NULL, 'Medical clearance'),
+(4, 1, 1, NULL, 'reassess', 'medium', 'open', '2026-07-15 10:00:00', NULL, 'Recheck movement quality');
 
--- -----------------------------------------------------------------------------
--- Messages log
--- -----------------------------------------------------------------------------
-INSERT INTO messages_log (member_id, coach_id, channel, message_type, content, sent_at, status) VALUES
-  (8,  2,    'whatsapp', 'winback',  'Hi Reem, we noticed you have not been in. Everything ok?', DATE_SUB(NOW(), INTERVAL 2 DAY),  'delivered'),
-  (2,  2,    'email',    'renewal',  'Thanks for renewing your quarterly membership.',           DATE_SUB(NOW(), INTERVAL 5 DAY),  'sent'),
-  (11, 1,    'sms',      'winback',  'Come back with 20% off this month.',                       DATE_SUB(NOW(), INTERVAL 10 DAY), 'sent'),
-  (6,  2,    'whatsapp', 'followup', 'Reply: classes start at 6am tomorrow. See you there!',     DATE_SUB(NOW(), INTERVAL 1 DAY),  'replied');
+INSERT INTO messages_log
+(message_id, member_id, coach_id, channel, message_type, content, sent_at, status)
+VALUES
+(1, 1, 1, 'whatsapp', 'welcome', 'Welcome to Xcamp. Your onboarding has started.', '2026-07-01 09:00:00', 'sent'),
+(2, 1, 1, 'whatsapp', 'warning', 'We noticed missed visits. Please confirm your next session.', '2026-07-05 12:05:00', 'sent'),
+(3, 3, 2, 'call', 'followup', 'Discussed attendance and pain management.', '2026-07-04 11:10:00', 'sent'),
+(4, 5, 1, 'in_person', 'progress', 'Great improvement. Consider upgrade.', '2026-07-03 13:10:00', 'sent');
 
--- -----------------------------------------------------------------------------
--- Milestones
--- -----------------------------------------------------------------------------
-INSERT INTO milestones (member_id, milestone_date, milestone_type, description, reward_status) VALUES
-  (2, DATE_SUB(CURRENT_DATE, INTERVAL 5 DAY),  'weight_loss',        'Lost first 2.5kg',       'badge'),
-  (1, DATE_SUB(CURRENT_DATE, INTERVAL 3 DAY),  'attendance_streak',  '20 sessions completed',  'gift'),
-  (1, DATE_SUB(CURRENT_DATE, INTERVAL 35 DAY), 'first_month',        'Completed first month',  'none');
+INSERT INTO milestones
+(milestone_id, member_id, milestone_date, milestone_type, description, reward_status)
+VALUES
+(1, 2, '2026-07-10', 'attendance_streak', '7-day consistency achieved.', 'badge'),
+(2, 5, '2026-07-10', 'strength_gain', 'New PR on deadlift.', 'gift');
 
--- -----------------------------------------------------------------------------
--- Demonstrate a stored procedure end-to-end: register a 16th member with their
--- first membership + payment in one atomic call.
--- -----------------------------------------------------------------------------
-SET @new_member := NULL;
-CALL sp_register_member(
-  'Laila Mostafa', '01100000019', 'laila@example.com', CURRENT_DATE,
-  2, 1, 500.00, 'card', @new_member
-);
-SELECT @new_member AS registered_member_id;
+INSERT INTO audit_logs
+(audit_id, user_id, entity_name, entity_id, action_type, old_data, new_data)
+VALUES
+(1, 1, 'members', 1, 'insert', NULL, JSON_OBJECT('full_name','Omar Khaled','status','new')),
+(2, 2, 'payments', 1, 'insert', NULL, JSON_OBJECT('status','paid','amount',3000.00));

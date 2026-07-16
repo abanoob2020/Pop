@@ -1,111 +1,80 @@
 -- =============================================================================
 -- xcamp-gym-sql : 03_triggers.sql
 -- -----------------------------------------------------------------------------
--- Triggers that enforce defaults and write to audit_logs.
--- Each is dropped-then-created so the file is re-runnable.
+-- AFTER INSERT triggers that fan domain events into the sp_handle_*_event /
+-- onboarding orchestrators in 02_procedures.sql.
+-- Each is dropped-then-created for re-runnability.
 -- =============================================================================
 
 USE xcamp_gym;
 
-DROP TRIGGER IF EXISTS trg_memberships_before_insert;
+DROP TRIGGER IF EXISTS trg_members_after_insert;
 DROP TRIGGER IF EXISTS trg_memberships_after_insert;
-DROP TRIGGER IF EXISTS trg_memberships_after_update;
 DROP TRIGGER IF EXISTS trg_payments_after_insert;
-DROP TRIGGER IF EXISTS trg_attendance_before_insert;
-DROP TRIGGER IF EXISTS trg_members_after_update;
+DROP TRIGGER IF EXISTS trg_attendance_after_insert;
+DROP TRIGGER IF EXISTS trg_assessments_after_insert;
+DROP TRIGGER IF EXISTS trg_injury_history_after_insert;
+DROP TRIGGER IF EXISTS trg_progress_tracking_after_insert;
+DROP TRIGGER IF EXISTS trg_followups_after_insert;
 
 DELIMITER $$
 
--- -----------------------------------------------------------------------------
--- Default a membership's end_date from the plan's duration when not supplied.
--- -----------------------------------------------------------------------------
-CREATE TRIGGER trg_memberships_before_insert
-BEFORE INSERT ON memberships
+CREATE TRIGGER trg_members_after_insert
+AFTER INSERT ON members
 FOR EACH ROW
 BEGIN
-  DECLARE v_duration INT UNSIGNED;
+    CALL sp_create_task(NEW.member_id, NEW.coach_id, NULL, 'manager_review', 'medium', DATE_ADD(NOW(), INTERVAL 1 DAY), 'New member created. Review profile and onboarding flow.');
+    CALL sp_log_message(NEW.member_id, NEW.coach_id, 'whatsapp', 'welcome', 'Welcome to Xcamp. Your onboarding has started.', 'sent');
+END $$
 
-  IF NEW.end_date IS NULL THEN
-    SELECT duration_days INTO v_duration FROM plans WHERE plan_id = NEW.plan_id;
-    IF v_duration IS NOT NULL THEN
-      SET NEW.end_date = DATE_ADD(NEW.start_date, INTERVAL v_duration DAY);
-    END IF;
-  END IF;
-END$$
-
--- -----------------------------------------------------------------------------
--- When a new active membership is created, make sure the member reads 'active'.
--- -----------------------------------------------------------------------------
 CREATE TRIGGER trg_memberships_after_insert
 AFTER INSERT ON memberships
 FOR EACH ROW
 BEGIN
-  IF NEW.status = 'active' THEN
-    UPDATE members
-    SET status = CASE WHEN status IN ('new','onboarding') THEN 'active' ELSE status END
-    WHERE member_id = NEW.member_id AND status IN ('new','onboarding','at_risk','paused','expired');
-  END IF;
+    UPDATE members SET status = 'onboarding' WHERE member_id = NEW.member_id AND status = 'new';
+    CALL sp_open_onboarding_workflow(NEW.member_id, (SELECT coach_id FROM members WHERE member_id = NEW.member_id), NEW.end_date);
+END $$
 
-  INSERT INTO audit_logs (entity_name, entity_id, action_type, new_data)
-  VALUES ('memberships', NEW.membership_id, 'insert',
-          JSON_OBJECT('member_id', NEW.member_id, 'plan_id', NEW.plan_id,
-                      'status', NEW.status, 'start_date', NEW.start_date,
-                      'end_date', NEW.end_date));
-END$$
-
--- -----------------------------------------------------------------------------
--- Log membership status changes.
--- -----------------------------------------------------------------------------
-CREATE TRIGGER trg_memberships_after_update
-AFTER UPDATE ON memberships
-FOR EACH ROW
-BEGIN
-  IF NOT (NEW.status <=> OLD.status) THEN
-    INSERT INTO audit_logs (entity_name, entity_id, action_type, old_data, new_data)
-    VALUES ('memberships', NEW.membership_id, 'update',
-            JSON_OBJECT('status', OLD.status),
-            JSON_OBJECT('status', NEW.status));
-  END IF;
-END$$
-
--- -----------------------------------------------------------------------------
--- Log every payment.
--- -----------------------------------------------------------------------------
 CREATE TRIGGER trg_payments_after_insert
 AFTER INSERT ON payments
 FOR EACH ROW
 BEGIN
-  INSERT INTO audit_logs (entity_name, entity_id, action_type, new_data)
-  VALUES ('payments', NEW.payment_id, 'insert',
-          JSON_OBJECT('member_id', NEW.member_id, 'amount', NEW.amount,
-                      'method', NEW.method, 'status', NEW.status));
-END$$
+    CALL sp_handle_payment_event(NEW.member_id, NEW.membership_id, NEW.status, (SELECT coach_id FROM members WHERE member_id = NEW.member_id));
+END $$
 
--- -----------------------------------------------------------------------------
--- Default attendance date from the check-in timestamp when not supplied.
--- -----------------------------------------------------------------------------
-CREATE TRIGGER trg_attendance_before_insert
-BEFORE INSERT ON daily_attendance
+CREATE TRIGGER trg_attendance_after_insert
+AFTER INSERT ON daily_attendance
 FOR EACH ROW
 BEGIN
-  IF NEW.attend_date IS NULL THEN
-    SET NEW.attend_date = DATE(COALESCE(NEW.check_in_at, NOW()));
-  END IF;
-END$$
+    CALL sp_handle_attendance_event(NEW.member_id, NEW.attended, NEW.coach_id);
+END $$
 
--- -----------------------------------------------------------------------------
--- Log member status changes.
--- -----------------------------------------------------------------------------
-CREATE TRIGGER trg_members_after_update
-AFTER UPDATE ON members
+CREATE TRIGGER trg_assessments_after_insert
+AFTER INSERT ON assessments
 FOR EACH ROW
 BEGIN
-  IF NOT (NEW.status <=> OLD.status) THEN
-    INSERT INTO audit_logs (entity_name, entity_id, action_type, old_data, new_data)
-    VALUES ('members', NEW.member_id, 'update',
-            JSON_OBJECT('status', OLD.status),
-            JSON_OBJECT('status', NEW.status));
-  END IF;
-END$$
+    CALL sp_handle_assessment_event(NEW.member_id, NEW.assessment_id, NEW.risk_score, NEW.coach_id);
+END $$
+
+CREATE TRIGGER trg_injury_history_after_insert
+AFTER INSERT ON injury_history
+FOR EACH ROW
+BEGIN
+    CALL sp_handle_injury_event(NEW.member_id, NEW.severity, (SELECT coach_id FROM members WHERE member_id = NEW.member_id));
+END $$
+
+CREATE TRIGGER trg_progress_tracking_after_insert
+AFTER INSERT ON progress_tracking
+FOR EACH ROW
+BEGIN
+    CALL sp_handle_progress_event(NEW.member_id, NEW.record_date, NEW.weight, NEW.body_fat, (SELECT coach_id FROM members WHERE member_id = NEW.member_id));
+END $$
+
+CREATE TRIGGER trg_followups_after_insert
+AFTER INSERT ON followups
+FOR EACH ROW
+BEGIN
+    CALL sp_handle_followup_event(NEW.member_id, NEW.coach_id, NEW.response_status);
+END $$
 
 DELIMITER ;

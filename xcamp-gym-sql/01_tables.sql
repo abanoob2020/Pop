@@ -1,7 +1,7 @@
 -- =============================================================================
 -- xcamp-gym-sql : 01_tables.sql
 -- -----------------------------------------------------------------------------
--- Schema for the xcamp_gym gym / personal-coaching management database.
+-- Schema for the xcamp_gym gym / coaching operations database.
 -- All tables are InnoDB / utf8mb4. Drops run child-first so the file is
 -- re-runnable; creates run parent-first.
 -- =============================================================================
@@ -87,17 +87,15 @@ CREATE TABLE members (
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------
--- Membership plans (catalog)
+-- Plans (membership catalog)
 -- -----------------------------------------------------------------------------
 CREATE TABLE plans (
   plan_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  name VARCHAR(120) NOT NULL UNIQUE,
-  description VARCHAR(255) NULL,
-  price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  plan_name VARCHAR(120) NOT NULL UNIQUE,
   duration_days INT UNSIGNED NOT NULL DEFAULT 30,
-  sessions_per_week TINYINT UNSIGNED NULL,
-  plan_type ENUM('monthly','quarterly','half_year','annual','pt','online') NOT NULL DEFAULT 'monthly',
-  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  access_level ENUM('basic','pro','elite') NOT NULL DEFAULT 'basic',
+  active TINYINT(1) NOT NULL DEFAULT 1,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT chk_plans_price CHECK (price >= 0),
@@ -113,10 +111,8 @@ CREATE TABLE memberships (
   plan_id BIGINT UNSIGNED NOT NULL,
   start_date DATE NOT NULL,
   end_date DATE NULL,
-  status ENUM('active','frozen','expired','cancelled') NOT NULL DEFAULT 'active',
-  price_paid DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-  sessions_total INT UNSIGNED NULL,
-  sessions_used INT UNSIGNED NOT NULL DEFAULT 0,
+  renewal_status ENUM('pending','renewed','expired','not_renewing') NOT NULL DEFAULT 'pending',
+  payment_status ENUM('unpaid','partial','paid','failed','refunded') NOT NULL DEFAULT 'unpaid',
   auto_renew TINYINT(1) NOT NULL DEFAULT 0,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -125,7 +121,7 @@ CREATE TABLE memberships (
   CONSTRAINT fk_memberships_plan FOREIGN KEY (plan_id) REFERENCES plans(plan_id)
     ON DELETE RESTRICT ON UPDATE CASCADE,
   INDEX idx_memberships_member (member_id),
-  INDEX idx_memberships_status_end (status, end_date)
+  INDEX idx_memberships_end (end_date)
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------
@@ -135,11 +131,12 @@ CREATE TABLE payments (
   payment_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   member_id BIGINT UNSIGNED NOT NULL,
   membership_id BIGINT UNSIGNED NULL,
+  payment_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   amount DECIMAL(10,2) NOT NULL,
-  method ENUM('cash','card','transfer','online','wallet') NOT NULL DEFAULT 'cash',
-  status ENUM('paid','pending','refunded','failed') NOT NULL DEFAULT 'paid',
-  paid_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  reference VARCHAR(100) NULL,
+  method ENUM('cash','card','bank_transfer','online','wallet') NOT NULL DEFAULT 'cash',
+  status ENUM('paid','failed','partial','pending','refunded') NOT NULL DEFAULT 'paid',
+  receipt_no VARCHAR(50) NULL,
+  reference_no VARCHAR(50) NULL,
   notes VARCHAR(255) NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_payments_member FOREIGN KEY (member_id) REFERENCES members(member_id)
@@ -148,30 +145,31 @@ CREATE TABLE payments (
     ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT chk_payments_amount CHECK (amount >= 0),
   INDEX idx_payments_member (member_id),
-  INDEX idx_payments_paid_at (paid_at)
+  INDEX idx_payments_date (payment_date)
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------
--- Body / fitness assessments
+-- Assessments (movement screen / risk scoring)
 -- -----------------------------------------------------------------------------
 CREATE TABLE assessments (
   assessment_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   member_id BIGINT UNSIGNED NOT NULL,
   coach_id BIGINT UNSIGNED NULL,
-  assessed_on DATE NOT NULL,
-  weight_kg DECIMAL(5,2) NULL,
-  height_cm DECIMAL(5,2) NULL,
-  body_fat_pct DECIMAL(5,2) NULL,
-  muscle_mass_kg DECIMAL(5,2) NULL,
-  bmi DECIMAL(5,2) NULL,
-  resting_hr SMALLINT UNSIGNED NULL,
-  notes TEXT NULL,
+  assessment_date DATETIME NOT NULL,
+  parq_risk_count INT UNSIGNED NOT NULL DEFAULT 0,
+  overhead_squat_score DECIMAL(4,2) NULL,
+  posture_score DECIMAL(4,2) NULL,
+  movement_score DECIMAL(4,2) NULL,
+  risk_score DECIMAL(5,2) NULL,
+  classification ENUM('excellent','good','moderate','high_risk','critical') NULL,
+  recommendation VARCHAR(255) NULL,
+  next_review_date DATE NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_assessments_member FOREIGN KEY (member_id) REFERENCES members(member_id)
     ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT fk_assessments_coach FOREIGN KEY (coach_id) REFERENCES coaches(coach_id)
     ON DELETE SET NULL ON UPDATE CASCADE,
-  INDEX idx_assessments_member_date (member_id, assessed_on)
+  INDEX idx_assessments_member_date (member_id, assessment_date)
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------
@@ -180,11 +178,12 @@ CREATE TABLE assessments (
 CREATE TABLE injury_history (
   injury_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   member_id BIGINT UNSIGNED NOT NULL,
+  injury_date DATE NULL,
+  body_area VARCHAR(120) NULL,
   injury_type VARCHAR(120) NOT NULL,
-  body_part VARCHAR(120) NULL,
-  severity ENUM('mild','moderate','severe') NOT NULL DEFAULT 'mild',
-  occurred_on DATE NULL,
-  resolved_on DATE NULL,
+  severity ENUM('low','medium','high','critical') NOT NULL DEFAULT 'low',
+  current_status ENUM('active','recovering','resolved') NOT NULL DEFAULT 'active',
+  doctor_clearance TINYINT(1) NOT NULL DEFAULT 0,
   notes TEXT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_injury_member FOREIGN KEY (member_id) REFERENCES members(member_id)
@@ -198,15 +197,20 @@ CREATE TABLE injury_history (
 CREATE TABLE daily_attendance (
   attendance_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   member_id BIGINT UNSIGNED NOT NULL,
-  attend_date DATE NOT NULL,
-  check_in_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  check_out_at DATETIME NULL,
-  source ENUM('kiosk','manual','app') NOT NULL DEFAULT 'manual',
+  coach_id BIGINT UNSIGNED NULL,
+  attendance_date DATE NOT NULL,
+  check_in_time TIME NULL,
+  check_out_time TIME NULL,
+  attended TINYINT(1) NOT NULL DEFAULT 1,
+  session_type VARCHAR(40) NULL,
+  notes VARCHAR(255) NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_attendance_member FOREIGN KEY (member_id) REFERENCES members(member_id)
     ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT uq_attendance_member_day UNIQUE (member_id, attend_date),
-  INDEX idx_attendance_date (attend_date)
+  CONSTRAINT fk_attendance_coach FOREIGN KEY (coach_id) REFERENCES coaches(coach_id)
+    ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT uq_attendance_member_day UNIQUE (member_id, attendance_date),
+  INDEX idx_attendance_date (attendance_date)
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------
@@ -216,36 +220,41 @@ CREATE TABLE followups (
   followup_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   member_id BIGINT UNSIGNED NOT NULL,
   coach_id BIGINT UNSIGNED NULL,
-  due_date DATE NOT NULL,
-  channel ENUM('call','whatsapp','email','sms','in_person') NOT NULL DEFAULT 'call',
-  status ENUM('pending','done','missed','rescheduled') NOT NULL DEFAULT 'pending',
-  outcome VARCHAR(255) NULL,
-  notes TEXT NULL,
+  followup_date DATETIME NOT NULL,
+  reason VARCHAR(120) NULL,
+  contact_channel ENUM('whatsapp','call','sms','email','in_person') NOT NULL DEFAULT 'whatsapp',
+  response_status ENUM('no_response','replied','booked','converted','escalated') NOT NULL DEFAULT 'no_response',
+  action_taken VARCHAR(255) NULL,
+  next_followup_date DATETIME NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_followups_member FOREIGN KEY (member_id) REFERENCES members(member_id)
     ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT fk_followups_coach FOREIGN KEY (coach_id) REFERENCES coaches(coach_id)
     ON DELETE SET NULL ON UPDATE CASCADE,
-  INDEX idx_followups_due_status (due_date, status)
+  INDEX idx_followups_member (member_id),
+  INDEX idx_followups_next (next_followup_date)
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------
--- Progress tracking (self / coach logged measurements)
+-- Progress tracking (measurements over time)
 -- -----------------------------------------------------------------------------
 CREATE TABLE progress_tracking (
   progress_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   member_id BIGINT UNSIGNED NOT NULL,
-  log_date DATE NOT NULL,
-  weight_kg DECIMAL(5,2) NULL,
-  waist_cm DECIMAL(5,2) NULL,
-  chest_cm DECIMAL(5,2) NULL,
-  arm_cm DECIMAL(5,2) NULL,
-  notes VARCHAR(255) NULL,
+  record_date DATE NOT NULL,
+  weight DECIMAL(6,2) NULL,
+  body_fat DECIMAL(5,2) NULL,
+  muscle_mass DECIMAL(6,2) NULL,
+  waist DECIMAL(5,2) NULL,
+  chest DECIMAL(5,2) NULL,
+  hips DECIMAL(5,2) NULL,
+  performance_note VARCHAR(255) NULL,
+  photo_ref VARCHAR(255) NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_progress_member FOREIGN KEY (member_id) REFERENCES members(member_id)
     ON DELETE CASCADE ON UPDATE CASCADE,
-  INDEX idx_progress_member_date (member_id, log_date)
+  INDEX idx_progress_member_date (member_id, record_date)
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------
@@ -338,7 +347,7 @@ CREATE TABLE retention_flags (
   flag_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   member_id BIGINT UNSIGNED NOT NULL,
   assessment_id BIGINT UNSIGNED NULL,
-  flag_type ENUM('low_attendance','no_show','payment_failed','injury','low_motivation','no_progress','low_response') NOT NULL,
+  flag_type ENUM('low_attendance','no_show','payment_failed','injury','low_motivation','no_progress','low_response','high_risk') NOT NULL,
   severity ENUM('low','medium','high','critical') NOT NULL DEFAULT 'medium',
   status ENUM('open','in_progress','resolved','dismissed') NOT NULL DEFAULT 'open',
   detected_at DATETIME NOT NULL,
@@ -352,7 +361,8 @@ CREATE TABLE retention_flags (
   CONSTRAINT fk_flags_assessment FOREIGN KEY (assessment_id) REFERENCES assessments(assessment_id)
     ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT fk_flags_owner FOREIGN KEY (owner_coach_id) REFERENCES coaches(coach_id)
-    ON DELETE SET NULL ON UPDATE CASCADE
+    ON DELETE SET NULL ON UPDATE CASCADE,
+  INDEX idx_flags_member_status (member_id, status)
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------
@@ -363,7 +373,7 @@ CREATE TABLE tasks (
   member_id BIGINT UNSIGNED NULL,
   coach_id BIGINT UNSIGNED NULL,
   flag_id BIGINT UNSIGNED NULL,
-  task_type ENUM('call','whatsapp','reassess','program_update','payment_followup','medical_referral','manager_review') NOT NULL,
+  task_type ENUM('call','whatsapp','reassess','program_update','payment_followup','medical_referral','manager_review','renewal') NOT NULL,
   priority ENUM('low','medium','high','urgent') NOT NULL DEFAULT 'medium',
   status ENUM('open','doing','done','cancelled') NOT NULL DEFAULT 'open',
   due_at DATETIME NULL,
@@ -376,7 +386,8 @@ CREATE TABLE tasks (
   CONSTRAINT fk_tasks_coach FOREIGN KEY (coach_id) REFERENCES coaches(coach_id)
     ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT fk_tasks_flag FOREIGN KEY (flag_id) REFERENCES retention_flags(flag_id)
-    ON DELETE SET NULL ON UPDATE CASCADE
+    ON DELETE SET NULL ON UPDATE CASCADE,
+  INDEX idx_tasks_status_due (status, due_at)
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------
@@ -416,7 +427,7 @@ CREATE TABLE milestones (
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------
--- Audit logs (written by triggers)
+-- Audit logs (written by application / procedures)
 -- -----------------------------------------------------------------------------
 CREATE TABLE audit_logs (
   audit_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -428,5 +439,7 @@ CREATE TABLE audit_logs (
   new_data JSON NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_audit_user FOREIGN KEY (user_id) REFERENCES users(user_id)
-    ON DELETE SET NULL ON UPDATE CASCADE
+    ON DELETE SET NULL ON UPDATE CASCADE,
+  INDEX idx_audit_entity (entity_name, entity_id),
+  INDEX idx_audit_created (created_at)
 ) ENGINE=InnoDB;
