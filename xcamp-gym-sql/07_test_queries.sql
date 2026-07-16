@@ -32,6 +32,3 @@ FROM tasks
 WHERE status = 'open'
 GROUP BY priority
 ORDER BY FIELD(priority, 'urgent', 'high', 'medium', 'low');
-
-SET FOREIGN_KEY_CHECKS = @OLD_FOREIGN_KEY_CHECKS;
-SET SQL_MODE = @OLD_SQL_MODE;

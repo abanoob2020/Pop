@@ -10,6 +10,10 @@
 
 USE xcamp_gym;
 
+-- Skip trigger side effects while the fixed-ID seed loads (self-contained so it
+-- is correct under run_all.sql, deploy.sh, or a manual load). Reset at the end.
+SET @seeding = 1;
+
 INSERT INTO users (user_id, full_name, email, phone, password_hash, role, is_active, last_login_at) VALUES
 (1, 'Admin One', 'admin@xcamp.com', '01000000001', 'hash_admin', 'admin', 1, NOW()),
 (2, 'Manager One', 'manager@xcamp.com', '01000000002', 'hash_manager', 'manager', 1, NOW()),
@@ -163,3 +167,6 @@ INSERT INTO audit_logs
 VALUES
 (1, 1, 'members', 1, 'insert', NULL, JSON_OBJECT('full_name','Omar Khaled','status','new')),
 (2, 2, 'payments', 1, 'insert', NULL, JSON_OBJECT('status','paid','amount',3000.00));
+
+-- Re-enable trigger side effects for runtime.
+SET @seeding = NULL;
