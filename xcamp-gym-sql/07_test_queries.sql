@@ -60,7 +60,7 @@ SELECT member_id, status FROM members WHERE member_id = 7;
 SELECT flag_type, severity, status, action_required FROM retention_flags WHERE member_id = 7 ORDER BY flag_id DESC LIMIT 1;
 
 SELECT '12. Audit log tail (written by triggers)' AS test;
-SELECT audit_id, entity_type, entity_id, action, created_at
+SELECT audit_id, entity_name, entity_id, action_type, created_at
 FROM audit_logs ORDER BY audit_id DESC LIMIT 10;
 
 -- ---------------------------------------------------------------------------

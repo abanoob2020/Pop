@@ -384,21 +384,19 @@ CREATE TABLE tasks (
 -- -----------------------------------------------------------------------------
 CREATE TABLE messages_log (
   message_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  member_id BIGINT UNSIGNED NULL,
-  user_id BIGINT UNSIGNED NULL,
-  channel ENUM('sms','whatsapp','email','call','app') NOT NULL DEFAULT 'whatsapp',
-  direction ENUM('outbound','inbound') NOT NULL DEFAULT 'outbound',
-  subject VARCHAR(150) NULL,
-  body TEXT NULL,
-  status ENUM('queued','sent','delivered','read','failed') NOT NULL DEFAULT 'sent',
-  sent_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  member_id BIGINT UNSIGNED NOT NULL,
+  coach_id BIGINT UNSIGNED NULL,
+  channel ENUM('whatsapp','sms','email','call','in_person','other') NOT NULL DEFAULT 'whatsapp',
+  message_type ENUM('welcome','followup','reminder','winback','renewal','progress','warning','other') NOT NULL DEFAULT 'other',
+  content TEXT NOT NULL,
+  sent_at DATETIME NOT NULL,
+  status ENUM('sent','delivered','failed','replied') NOT NULL DEFAULT 'sent',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_messages_member FOREIGN KEY (member_id) REFERENCES members(member_id)
-    ON DELETE SET NULL ON UPDATE CASCADE,
-  CONSTRAINT fk_messages_user FOREIGN KEY (user_id) REFERENCES users(user_id)
-    ON DELETE SET NULL ON UPDATE CASCADE,
-  INDEX idx_messages_member (member_id),
-  INDEX idx_messages_sent_at (sent_at)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_messages_coach FOREIGN KEY (coach_id) REFERENCES coaches(coach_id)
+    ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------
@@ -407,15 +405,14 @@ CREATE TABLE messages_log (
 CREATE TABLE milestones (
   milestone_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   member_id BIGINT UNSIGNED NOT NULL,
-  milestone_type ENUM('weight_goal','attendance','strength','streak','anniversary','other') NOT NULL DEFAULT 'other',
-  title VARCHAR(150) NOT NULL,
-  achieved_on DATE NOT NULL,
-  value VARCHAR(80) NULL,
-  notes VARCHAR(255) NULL,
+  milestone_date DATE NOT NULL,
+  milestone_type ENUM('first_week','first_month','weight_loss','strength_gain','attendance_streak','program_completion','renewal','upgrade') NOT NULL,
+  description VARCHAR(255) NOT NULL,
+  reward_status ENUM('none','badge','gift','promotion','discount') NOT NULL DEFAULT 'none',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_milestones_member FOREIGN KEY (member_id) REFERENCES members(member_id)
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  INDEX idx_milestones_member (member_id)
+    ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------
@@ -423,15 +420,13 @@ CREATE TABLE milestones (
 -- -----------------------------------------------------------------------------
 CREATE TABLE audit_logs (
   audit_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  actor_user_id BIGINT UNSIGNED NULL,
-  entity_type VARCHAR(60) NOT NULL,
+  user_id BIGINT UNSIGNED NULL,
+  entity_name VARCHAR(80) NOT NULL,
   entity_id BIGINT UNSIGNED NULL,
-  action VARCHAR(60) NOT NULL,
-  old_values JSON NULL,
-  new_values JSON NULL,
+  action_type ENUM('insert','update','delete','login','logout','export') NOT NULL,
+  old_data JSON NULL,
+  new_data JSON NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_audit_user FOREIGN KEY (actor_user_id) REFERENCES users(user_id)
-    ON DELETE SET NULL ON UPDATE CASCADE,
-  INDEX idx_audit_entity (entity_type, entity_id),
-  INDEX idx_audit_created (created_at)
+  CONSTRAINT fk_audit_user FOREIGN KEY (user_id) REFERENCES users(user_id)
+    ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB;

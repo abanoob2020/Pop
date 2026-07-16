@@ -46,7 +46,7 @@ BEGIN
     WHERE member_id = NEW.member_id AND status IN ('new','onboarding','at_risk','paused','expired');
   END IF;
 
-  INSERT INTO audit_logs (entity_type, entity_id, action, new_values)
+  INSERT INTO audit_logs (entity_name, entity_id, action_type, new_data)
   VALUES ('memberships', NEW.membership_id, 'insert',
           JSON_OBJECT('member_id', NEW.member_id, 'plan_id', NEW.plan_id,
                       'status', NEW.status, 'start_date', NEW.start_date,
@@ -61,8 +61,8 @@ AFTER UPDATE ON memberships
 FOR EACH ROW
 BEGIN
   IF NOT (NEW.status <=> OLD.status) THEN
-    INSERT INTO audit_logs (entity_type, entity_id, action, old_values, new_values)
-    VALUES ('memberships', NEW.membership_id, 'status_change',
+    INSERT INTO audit_logs (entity_name, entity_id, action_type, old_data, new_data)
+    VALUES ('memberships', NEW.membership_id, 'update',
             JSON_OBJECT('status', OLD.status),
             JSON_OBJECT('status', NEW.status));
   END IF;
@@ -75,7 +75,7 @@ CREATE TRIGGER trg_payments_after_insert
 AFTER INSERT ON payments
 FOR EACH ROW
 BEGIN
-  INSERT INTO audit_logs (entity_type, entity_id, action, new_values)
+  INSERT INTO audit_logs (entity_name, entity_id, action_type, new_data)
   VALUES ('payments', NEW.payment_id, 'insert',
           JSON_OBJECT('member_id', NEW.member_id, 'amount', NEW.amount,
                       'method', NEW.method, 'status', NEW.status));
@@ -101,8 +101,8 @@ AFTER UPDATE ON members
 FOR EACH ROW
 BEGIN
   IF NOT (NEW.status <=> OLD.status) THEN
-    INSERT INTO audit_logs (entity_type, entity_id, action, old_values, new_values)
-    VALUES ('members', NEW.member_id, 'status_change',
+    INSERT INTO audit_logs (entity_name, entity_id, action_type, old_data, new_data)
+    VALUES ('members', NEW.member_id, 'update',
             JSON_OBJECT('status', OLD.status),
             JSON_OBJECT('status', NEW.status));
   END IF;

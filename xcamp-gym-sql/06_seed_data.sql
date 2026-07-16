@@ -218,19 +218,19 @@ INSERT INTO tasks (member_id, coach_id, flag_id, task_type, priority, status, du
 -- -----------------------------------------------------------------------------
 -- Messages log
 -- -----------------------------------------------------------------------------
-INSERT INTO messages_log (member_id, user_id, channel, direction, subject, body, status, sent_at) VALUES
-  (8,  4, 'whatsapp', 'outbound', 'We miss you!', 'Hi Reem, we noticed you have not been in. Everything ok?', 'delivered', DATE_SUB(NOW(), INTERVAL 2 DAY)),
-  (2,  2, 'email',    'outbound', 'Renewal receipt', 'Thanks for renewing your quarterly membership.', 'sent', DATE_SUB(NOW(), INTERVAL 5 DAY)),
-  (11, 3, 'sms',      'outbound', 'Win-back offer', 'Come back with 20% off this month.', 'sent', DATE_SUB(NOW(), INTERVAL 10 DAY)),
-  (6,  NULL, 'app',   'inbound',  NULL, 'What time do classes start tomorrow?', 'read', DATE_SUB(NOW(), INTERVAL 1 DAY));
+INSERT INTO messages_log (member_id, coach_id, channel, message_type, content, sent_at, status) VALUES
+  (8,  2,    'whatsapp', 'winback',  'Hi Reem, we noticed you have not been in. Everything ok?', DATE_SUB(NOW(), INTERVAL 2 DAY),  'delivered'),
+  (2,  2,    'email',    'renewal',  'Thanks for renewing your quarterly membership.',           DATE_SUB(NOW(), INTERVAL 5 DAY),  'sent'),
+  (11, 1,    'sms',      'winback',  'Come back with 20% off this month.',                       DATE_SUB(NOW(), INTERVAL 10 DAY), 'sent'),
+  (6,  2,    'whatsapp', 'followup', 'Reply: classes start at 6am tomorrow. See you there!',     DATE_SUB(NOW(), INTERVAL 1 DAY),  'replied');
 
 -- -----------------------------------------------------------------------------
 -- Milestones
 -- -----------------------------------------------------------------------------
-INSERT INTO milestones (member_id, milestone_type, title, achieved_on, value, notes) VALUES
-  (2, 'weight_goal', 'Lost first 2.5kg', DATE_SUB(CURRENT_DATE, INTERVAL 5 DAY), '-2.5kg', NULL),
-  (1, 'attendance',  '20 sessions completed', DATE_SUB(CURRENT_DATE, INTERVAL 3 DAY), '20', NULL),
-  (1, 'anniversary', '1 year with xcamp', DATE_SUB(CURRENT_DATE, INTERVAL 35 DAY), '1yr', 'Loyal member');
+INSERT INTO milestones (member_id, milestone_date, milestone_type, description, reward_status) VALUES
+  (2, DATE_SUB(CURRENT_DATE, INTERVAL 5 DAY),  'weight_loss',        'Lost first 2.5kg',       'badge'),
+  (1, DATE_SUB(CURRENT_DATE, INTERVAL 3 DAY),  'attendance_streak',  '20 sessions completed',  'gift'),
+  (1, DATE_SUB(CURRENT_DATE, INTERVAL 35 DAY), 'first_month',        'Completed first month',  'none');
 
 -- -----------------------------------------------------------------------------
 -- Demonstrate a stored procedure end-to-end: register a 16th member with their
