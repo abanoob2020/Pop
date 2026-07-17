@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SQL_DIR="$ROOT_DIR/sql"
 LOG_DIR="$ROOT_DIR/logs"
 mkdir -p "$LOG_DIR"
 
@@ -49,8 +50,8 @@ log_warn()  { printf "%b[WARN]%b %s\n" "$YELLOW" "$NC" "$1"; }
 log_err()   { printf "%b[ERR]%b %s\n" "$RED" "$NC" "$1" >&2; }
 
 require_file() {
-  local f="$ROOT_DIR/$1"
-  [[ -f "$f" ]] || { log_err "Missing file: $1"; exit 1; }
+  local f="$SQL_DIR/$1"
+  [[ -f "$f" ]] || { log_err "Missing file: sql/$1"; exit 1; }
 }
 
 for f in "${FILES[@]}"; do
@@ -75,10 +76,10 @@ run_sql() {
   if [[ "$file" == "06_seed_data.sql" ]]; then
     # Each file runs in its own connection, so set @seeding in the same pipe as
     # the seed to suppress trigger side effects while the fixed-ID rows load.
-    { printf 'SET @seeding=1;\n'; cat "$ROOT_DIR/$file"; } \
+    { printf 'SET @seeding=1;\n'; cat "$SQL_DIR/$file"; } \
       | "${MYSQL_CMD[@]}" >> "$LOG_DIR/deploy.log" 2>&1
   else
-    "${MYSQL_CMD[@]}" < "$ROOT_DIR/$file" >> "$LOG_DIR/deploy.log" 2>&1
+    "${MYSQL_CMD[@]}" < "$SQL_DIR/$file" >> "$LOG_DIR/deploy.log" 2>&1
   fi
   log_ok "Finished $file"
 }
