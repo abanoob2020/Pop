@@ -1,18 +1,13 @@
 -- =============================================================================
 -- xcamp-gym-sql : 06_seed_data.sql
 -- -----------------------------------------------------------------------------
--- Deterministic sample data with explicit primary keys. Loaded by run_all.sql
--- BEFORE the triggers are created, so the explicit tasks/messages/flags/
--- milestones rows below are not duplicated by trigger side effects.
---
--- Password hashes are placeholders for demo only.
+-- Deterministic sample data with fixed IDs. The runner (run_all.sql / deploy.sh)
+-- sets @seeding=1 around this file so the AFTER-INSERT triggers skip while the
+-- explicitly-keyed rows load; do the same if loading this file manually:
+--   SET @seeding=1; SOURCE 06_seed_data.sql; SET @seeding=NULL;
 -- =============================================================================
 
 USE xcamp_gym;
-
--- Skip trigger side effects while the fixed-ID seed loads (self-contained so it
--- is correct under run_all.sql, deploy.sh, or a manual load). Reset at the end.
-SET @seeding = 1;
 
 INSERT INTO users (user_id, full_name, email, phone, password_hash, role, is_active, last_login_at) VALUES
 (1, 'Admin One', 'admin@xcamp.com', '01000000001', 'hash_admin', 'admin', 1, NOW()),
@@ -167,6 +162,3 @@ INSERT INTO audit_logs
 VALUES
 (1, 1, 'members', 1, 'insert', NULL, JSON_OBJECT('full_name','Omar Khaled','status','new')),
 (2, 2, 'payments', 1, 'insert', NULL, JSON_OBJECT('status','paid','amount',3000.00));
-
--- Re-enable trigger side effects for runtime.
-SET @seeding = NULL;

@@ -72,7 +72,14 @@ fi
 run_sql() {
   local file="$1"
   log_info "Running $file"
-  "${MYSQL_CMD[@]}" < "$ROOT_DIR/$file" >> "$LOG_DIR/deploy.log" 2>&1
+  if [[ "$file" == "06_seed_data.sql" ]]; then
+    # Each file runs in its own connection, so set @seeding in the same pipe as
+    # the seed to suppress trigger side effects while the fixed-ID rows load.
+    { printf 'SET @seeding=1;\n'; cat "$ROOT_DIR/$file"; } \
+      | "${MYSQL_CMD[@]}" >> "$LOG_DIR/deploy.log" 2>&1
+  else
+    "${MYSQL_CMD[@]}" < "$ROOT_DIR/$file" >> "$LOG_DIR/deploy.log" 2>&1
+  fi
   log_ok "Finished $file"
 }
 

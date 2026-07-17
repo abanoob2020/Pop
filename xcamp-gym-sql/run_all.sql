@@ -4,7 +4,10 @@ SOURCE 02_procedures.sql;
 SOURCE 03_triggers.sql;
 SOURCE 04_events.sql;
 SOURCE 05_views.sql;
+-- Skip trigger side effects while the fixed-ID seed loads, then re-enable.
+SET @seeding = 1;
 SOURCE 06_seed_data.sql;
+SET @seeding = NULL;
 SOURCE 07_test_queries.sql;
 
 -- Restore the session state saved in 00_init.sql (valid here because run_all
