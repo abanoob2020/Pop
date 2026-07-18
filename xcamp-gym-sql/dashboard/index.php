@@ -7,6 +7,7 @@
 //   ثم افتح:  http://localhost:8000
 // =============================================================================
 require __DIR__ . '/db.php';
+require_role(['admin', 'manager', 'reception']); // المدراء فقط؛ الكابتن يُحوَّل لواجهته
 
 $error = null;
 $flash = null;
