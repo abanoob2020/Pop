@@ -10,6 +10,10 @@ $GOALS   = ['fat_loss','muscle_gain','strength','rehab','performance','general_f
 $PHASES  = ['corrective','stabilization','hypertrophy','strength','power','maintenance'];
 $PSTATUS = ['active','paused','completed','cancelled'];
 $CSTATUS = ['planned','partial','completed','missed'];
+$CLASSIF   = ['excellent','good','moderate','high_risk','critical'];
+$FREASONS  = ['no_show','low_attendance','payment_issue','injury','motivation','progress_review','other'];
+$FCHANNELS = ['call','whatsapp','sms','email','in_person','other'];
+$FRESP     = ['no_response','replied','booked','converted','escalated'];
 
 $error = null;
 try { $pdo = db(); } catch (Throwable $e) { $error = $e->getMessage(); }
@@ -33,6 +37,22 @@ function member_allowed(PDO $pdo, array $me, int $memberId): bool {
 if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         $act = $_POST['action'] ?? '';
+
+        // إغلاق مهمة: الصلاحية على المهمة نفسها (قد لا ترتبط بعضو)
+        if ($act === 'complete_task') {
+            $taskId = (int)($_POST['task_id'] ?? 0);
+            $st = $pdo->prepare("SELECT coach_id FROM tasks WHERE task_id = ? AND status IN ('open','doing')");
+            $st->execute([$taskId]);
+            $row = $st->fetch();
+            if (!$row) throw new RuntimeException('المهمة غير موجودة أو مغلقة بالفعل.');
+            if ($me['role'] === 'coach' && (int)$row['coach_id'] !== (int)$me['coach_id']) {
+                throw new RuntimeException('غير مسموح بإغلاق مهمة كابتن آخر.');
+            }
+            $pdo->prepare("UPDATE tasks SET status = 'done', completed_at = NOW() WHERE task_id = ?")->execute([$taskId]);
+            header("Location: captains.php?coach={$coachId}&member={$memberId}&ok=1");
+            exit;
+        }
+
         // تحديد العضو المستهدف والتحقّق من الصلاحية
         $targetMember = (int)($_POST['member_id'] ?? 0);
         if ($act === 'add_workout_session') {
@@ -71,6 +91,31 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
                            VALUES (?,?,?,?,?,1)")->execute([
                 $targetMember, trim($_POST['supplement_name']),
                 trim($_POST['dose'] ?? '') ?: null, trim($_POST['timing'] ?? '') ?: null, trim($_POST['purpose'] ?? '') ?: null,
+            ]);
+        } elseif ($act === 'add_assessment') {
+            // إدخال التقييم يشغّل sp_handle_assessment_event تلقائيًا عبر الـ trigger
+            // (risk_score >= 60: at_risk + إنذار ومهمة؛ >= 80: corrective + إنذار حرج)
+            $pdo->prepare("INSERT INTO assessments (member_id, coach_id, assessment_date, parq_risk_count, overhead_squat_score, posture_score, movement_score, risk_score, classification, recommendation, next_review_date)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?)")->execute([
+                $targetMember, (int)$_POST['coach_id'] ?: null, $_POST['assessment_date'],
+                (int)($_POST['parq_risk_count'] ?? 0),
+                $_POST['overhead_squat_score'] !== '' ? $_POST['overhead_squat_score'] : null,
+                $_POST['posture_score'] !== '' ? $_POST['posture_score'] : null,
+                $_POST['movement_score'] !== '' ? $_POST['movement_score'] : null,
+                $_POST['risk_score'] !== '' ? $_POST['risk_score'] : 0,
+                $_POST['classification'],
+                trim($_POST['recommendation'] ?? '') ?: null,
+                $_POST['next_review_date'] ?: null,
+            ]);
+        } elseif ($act === 'add_followup') {
+            // إدخال المتابعة يشغّل sp_handle_followup_event تلقائيًا عبر الـ trigger
+            // (no_response: مهمة اتصال غدًا؛ booked/converted: حلّ الإنذارات المفتوحة)
+            $pdo->prepare("INSERT INTO followups (member_id, coach_id, followup_date, reason, contact_channel, response_status, action_taken, next_followup_date)
+                           VALUES (?,?,?,?,?,?,?,?)")->execute([
+                $targetMember, (int)$_POST['coach_id'] ?: null, $_POST['followup_date'],
+                $_POST['reason'], $_POST['contact_channel'], $_POST['response_status'],
+                trim($_POST['action_taken'] ?? '') ?: null,
+                $_POST['next_followup_date'] ?: null,
             ]);
         } elseif ($act === 'add_progress') {
             $pdo->prepare("INSERT INTO progress_tracking (member_id, record_date, weight, body_fat, muscle_mass, waist, chest, hips, performance_note)
@@ -137,7 +182,32 @@ if (!$memberId) {
         }
         echo '</table>';
     }
-    echo '</section>'; page_foot(); exit;
+    echo '</section>';
+
+    // ---- مهام الكابتن المفتوحة (تُغلق من هنا) ----
+    $ctasks = $pdo->prepare("SELECT t.task_id, t.task_type, t.priority, t.status, t.due_at, t.notes, m.full_name AS member_name
+                             FROM tasks t LEFT JOIN members m ON m.member_id = t.member_id
+                             WHERE t.coach_id = ? AND t.status IN ('open','doing')
+                             ORDER BY FIELD(t.priority,'urgent','high','medium','low'), t.due_at");
+    $ctasks->execute([$coachId]);
+    $ctasks = $ctasks->fetchAll();
+    $prB = ['urgent'=>'#dc2626','high'=>'#f59e0b','medium'=>'#2563eb','low'=>'#6b7280'];
+    echo '<section><h2>📋 مهام الكابتن المفتوحة</h2>';
+    if (!$ctasks) echo '<div class="empty">لا توجد مهام مفتوحة. 🎉</div>';
+    else {
+        echo '<table><tr><th>#</th><th>العضو</th><th>النوع</th><th>الأولوية</th><th>الاستحقاق</th><th>ملاحظات</th><th></th></tr>';
+        foreach ($ctasks as $t) {
+            echo '<tr><td>' . h($t['task_id']) . '</td><td>' . h($t['member_name'] ?? '—') . '</td><td>' . h($t['task_type']) .
+                 '</td><td><span class="badge" style="background:' . ($prB[$t['priority']] ?? '#6b7280') . '">' . h($t['priority']) . '</span></td>' .
+                 '<td class="muted">' . h($t['due_at'] ?? '') . '</td><td class="muted">' . h($t['notes']) . '</td>' .
+                 '<td><form method="post" style="margin:0"><input type="hidden" name="action" value="complete_task">' .
+                 '<input type="hidden" name="task_id" value="' . (int)$t['task_id'] . '">' .
+                 '<button type="submit" style="background:#16a34a;color:#fff;border:0;padding:5px 12px;border-radius:7px;font-size:12px;cursor:pointer">✓ إنهاء</button></form></td></tr>';
+        }
+        echo '</table>';
+    }
+    echo '</section>';
+    page_foot(); exit;
 }
 
 // ===================== 3) صفحة العضو =====================
@@ -160,6 +230,15 @@ $supps = $pdo->prepare("SELECT * FROM supplements WHERE member_id = ? ORDER BY s
 $supps->execute([$memberId]); $supps = $supps->fetchAll();
 $prog = $pdo->prepare("SELECT * FROM progress_tracking WHERE member_id = ? ORDER BY record_date");
 $prog->execute([$memberId]); $prog = $prog->fetchAll();
+$assessments = $pdo->prepare("SELECT * FROM assessments WHERE member_id = ? ORDER BY assessment_date DESC");
+$assessments->execute([$memberId]); $assessments = $assessments->fetchAll();
+$fups = $pdo->prepare("SELECT * FROM followups WHERE member_id = ? ORDER BY followup_date DESC");
+$fups->execute([$memberId]); $fups = $fups->fetchAll();
+$mtasks = $pdo->prepare("SELECT * FROM tasks WHERE member_id = ? AND status IN ('open','doing')
+                         ORDER BY FIELD(priority,'urgent','high','medium','low'), due_at");
+$mtasks->execute([$memberId]); $mtasks = $mtasks->fetchAll();
+$mflags = $pdo->prepare("SELECT * FROM retention_flags WHERE member_id = ? AND status IN ('open','in_progress') ORDER BY detected_at DESC");
+$mflags->execute([$memberId]); $mflags = $mflags->fetchAll();
 
 $crumb = '<a class="link" href="captains.php?coach=' . $coachId . '">' . h($coach['full_name']) . '</a> / <strong>' . h($member['full_name']) . '</strong>';
 echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.php">الكباتن</a> / ') . $crumb . '</div>';
@@ -254,6 +333,99 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
     </form>
   </section>
 </div>
+
+<div class="grid2">
+  <!-- ===== التقييمات ===== -->
+  <section>
+    <h2>🧪 التقييمات (تشغّل أتمتة الخطر)</h2>
+    <?php if (!$assessments): ?><div class="empty">لا توجد تقييمات بعد.</div><?php else: ?>
+      <table><tr><th>التاريخ</th><th>خطر</th><th>التصنيف</th><th>توصية</th><th>مراجعة قادمة</th></tr>
+      <?php foreach ($assessments as $a): ?>
+        <tr><td><?=h(substr($a['assessment_date'],0,10))?></td>
+          <td><strong style="color:<?= $a['risk_score']>=80?'#dc2626':($a['risk_score']>=60?'#f59e0b':'#16a34a') ?>"><?=h($a['risk_score'])?></strong></td>
+          <td><?=h($a['classification'])?></td><td class="muted"><?=h($a['recommendation'])?></td><td class="muted"><?=h($a['next_review_date'])?></td></tr>
+      <?php endforeach; ?></table>
+    <?php endif; ?>
+    <h3>➕ تسجيل تقييم جديد</h3>
+    <form class="frm" method="post">
+      <input type="hidden" name="action" value="add_assessment">
+      <input type="hidden" name="member_id" value="<?=$memberId?>">
+      <input type="hidden" name="coach_id" value="<?=$coachId?>">
+      <div><label>التاريخ</label><input type="date" name="assessment_date" required></div>
+      <div><label>PAR-Q (عوامل خطر)</label><input type="number" name="parq_risk_count" min="0" value="0"></div>
+      <div><label>Overhead Squat</label><input type="number" step="0.1" name="overhead_squat_score"></div>
+      <div><label>القوام</label><input type="number" step="0.1" name="posture_score"></div>
+      <div><label>الحركة</label><input type="number" step="0.1" name="movement_score"></div>
+      <div><label>درجة الخطر (0-100)</label><input type="number" step="0.1" name="risk_score" required></div>
+      <div><label>التصنيف</label><?=sel('classification',$CLASSIF,'moderate')?></div>
+      <div><label>التوصية</label><input name="recommendation"></div>
+      <div><label>مراجعة قادمة</label><input type="date" name="next_review_date"></div>
+      <div><button type="submit">حفظ التقييم</button></div>
+    </form>
+    <p class="muted" style="font-size:12px;margin:10px 0 0">درجة ≥ 60: يتحوّل العضو لـ at_risk مع إنذار ومهمة تلقائيًا · ≥ 80: corrective مع إنذار حرج ومهمة عاجلة.</p>
+  </section>
+
+  <!-- ===== المتابعات ===== -->
+  <section>
+    <h2>☎️ المتابعات</h2>
+    <?php if (!$fups): ?><div class="empty">لا توجد متابعات بعد.</div><?php else: ?>
+      <table><tr><th>التاريخ</th><th>السبب</th><th>القناة</th><th>الرد</th><th>الإجراء</th></tr>
+      <?php foreach ($fups as $f): ?>
+        <tr><td><?=h(substr($f['followup_date'],0,10))?></td><td><?=h($f['reason'])?></td><td><?=h($f['contact_channel'])?></td>
+          <td><span class="badge" style="background:<?= in_array($f['response_status'],['booked','converted'])?'#16a34a':($f['response_status']==='no_response'?'#dc2626':'#6b7280') ?>"><?=h($f['response_status'])?></span></td>
+          <td class="muted"><?=h($f['action_taken'])?></td></tr>
+      <?php endforeach; ?></table>
+    <?php endif; ?>
+    <h3>➕ تسجيل متابعة</h3>
+    <form class="frm" method="post">
+      <input type="hidden" name="action" value="add_followup">
+      <input type="hidden" name="member_id" value="<?=$memberId?>">
+      <input type="hidden" name="coach_id" value="<?=$coachId?>">
+      <div><label>التاريخ</label><input type="date" name="followup_date" required></div>
+      <div><label>السبب</label><?=sel('reason',$FREASONS,'other')?></div>
+      <div><label>القناة</label><?=sel('contact_channel',$FCHANNELS,'whatsapp')?></div>
+      <div><label>الرد</label><?=sel('response_status',$FRESP,'no_response')?></div>
+      <div><label>الإجراء المتّخذ</label><input name="action_taken"></div>
+      <div><label>متابعة قادمة</label><input type="date" name="next_followup_date"></div>
+      <div><button type="submit">حفظ المتابعة</button></div>
+    </form>
+    <p class="muted" style="font-size:12px;margin:10px 0 0">no_response: تُفتح مهمة اتصال تلقائيًا · booked/converted: تُحلّ الإنذارات المفتوحة تلقائيًا.</p>
+  </section>
+</div>
+
+<!-- ===== مهام وإنذارات العضو ===== -->
+<section>
+  <h2>🗂️ المهام والإنذارات المفتوحة لهذا العضو</h2>
+  <div class="grid2">
+    <div>
+      <h3 style="margin-top:0">المهام</h3>
+      <?php if (!$mtasks): ?><div class="empty">لا توجد مهام مفتوحة.</div><?php else: ?>
+        <table><tr><th>النوع</th><th>الأولوية</th><th>الاستحقاق</th><th></th></tr>
+        <?php $prB2 = ['urgent'=>'#dc2626','high'=>'#f59e0b','medium'=>'#2563eb','low'=>'#6b7280'];
+        foreach ($mtasks as $t): ?>
+          <tr><td><?=h($t['task_type'])?></td>
+            <td><span class="badge" style="background:<?=$prB2[$t['priority']] ?? '#6b7280'?>"><?=h($t['priority'])?></span></td>
+            <td class="muted"><?=h($t['due_at'])?></td>
+            <td><form method="post" style="margin:0"><input type="hidden" name="action" value="complete_task">
+              <input type="hidden" name="task_id" value="<?=(int)$t['task_id']?>">
+              <button type="submit" style="background:#16a34a;color:#fff;border:0;padding:5px 12px;border-radius:7px;font-size:12px;cursor:pointer">✓ إنهاء</button></form></td></tr>
+        <?php endforeach; ?></table>
+      <?php endif; ?>
+    </div>
+    <div>
+      <h3 style="margin-top:0">الإنذارات</h3>
+      <?php if (!$mflags): ?><div class="empty">لا توجد إنذارات مفتوحة.</div><?php else: ?>
+        <table><tr><th>النوع</th><th>الشدة</th><th>الحالة</th><th>الإجراء المطلوب</th></tr>
+        <?php foreach ($mflags as $fl): ?>
+          <tr><td><?=h($fl['flag_type'])?></td>
+            <td><span class="badge" style="background:<?= in_array($fl['severity'],['critical','high'])?'#dc2626':'#f59e0b' ?>"><?=h($fl['severity'])?></span></td>
+            <td><?=h($fl['status'])?></td><td class="muted"><?=h($fl['action_required'])?></td></tr>
+        <?php endforeach; ?></table>
+        <p class="muted" style="font-size:12px">الإنذارات تُحلّ تلقائيًا عند تسجيل متابعة بردّ booked/converted أو عند حضور العضو.</p>
+      <?php endif; ?>
+    </div>
+  </div>
+</section>
 
 <!-- ===== متابعة التقدّم ===== -->
 <section>
