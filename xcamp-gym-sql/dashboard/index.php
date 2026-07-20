@@ -16,6 +16,7 @@ try { $pdo = db(); } catch (Throwable $e) { $error = $e->getMessage(); }
 // ---- إضافة عضو جديد (POST) — يشغّل أتمتة الأونبوردنج عبر الـ triggers ----
 if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_member') {
     try {
+        csrf_check();
         $name    = trim($_POST['full_name'] ?? '');
         $phone   = trim($_POST['phone'] ?? '') ?: null;
         $email   = trim($_POST['email'] ?? '') ?: null;
@@ -78,6 +79,7 @@ if ($error) { db_error_box($error); page_foot(); exit; }
 <section>
   <h2>➕ إضافة عضو جديد</h2>
   <form class="frm" method="post">
+    <?=csrf_field()?>
     <input type="hidden" name="action" value="add_member">
     <div><label>الاسم الكامل *</label><input name="full_name" required></div>
     <div><label>الهاتف</label><input name="phone"></div>

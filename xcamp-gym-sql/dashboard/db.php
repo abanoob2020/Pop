@@ -43,6 +43,21 @@ function is_manager(): bool {
     return $u && in_array($u['role'], ['admin','manager','reception'], true);
 }
 
+// ---- حماية CSRF ----
+function csrf_token(): string {
+    if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(32));
+    return $_SESSION['csrf'];
+}
+function csrf_field(): string {
+    return '<input type="hidden" name="csrf" value="' . h(csrf_token()) . '">';
+}
+/** يُستدعى في بداية معالجة أي POST؛ يرمي استثناءً عند فشل التحقق */
+function csrf_check(): void {
+    if (!hash_equals($_SESSION['csrf'] ?? '', (string)($_POST['csrf'] ?? ''))) {
+        throw new RuntimeException('فشل التحقق الأمني (CSRF) — أعد تحميل الصفحة وحاول مجددًا.');
+    }
+}
+
 function page_head(string $title, string $active = ''): void {
     $db = getenv('DB_NAME') ?: 'xcamp_gym';
     $u  = current_user();
@@ -101,6 +116,7 @@ function page_head(string $title, string $active = ''): void {
   </nav>
   <span class="sub">
     👤 <?=h($u['name'])?> (<?=h($u['role'])?>)
+    · <a href="account.php" style="color:#93c5fd">حسابي</a>
     · <a href="logout.php">خروج</a>
     · <span style="color:#475569">قاعدة: <?=h($db)?></span>
   </span>
