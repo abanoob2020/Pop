@@ -581,7 +581,34 @@ $rpeAvg = $pdo->prepare("SELECT AVG(rpe) FROM (
                             ORDER BY ws.session_date DESC, se.session_exercise_id DESC LIMIT 5) t");
 $rpeAvg->execute([$memberId]);
 $rpeAvg = $rpeAvg->fetchColumn();
-$deload = $rpeAvg !== null && $rpeAvg !== false && (float)$rpeAvg >= 9;
+$rpeAvg = ($rpeAvg === null || $rpeAvg === false) ? null : (float)$rpeAvg;
+$deload = $rpeAvg !== null && $rpeAvg >= 9;
+// الحجم التدريبي الأسبوعي (مجموعات/عضلة) خلال آخر 7 أيام — لحدود الحجم (MEV/MAV/MRV)
+$volRows = $pdo->prepare("SELECT e.muscle_group AS mg, SUM(COALESCE(se.sets,0)) AS sets
+                          FROM session_exercises se
+                          JOIN exercises e ON e.exercise_id = se.exercise_id
+                          JOIN workout_sessions ws ON ws.session_id = se.session_id
+                          JOIN workout_plans wp ON wp.workout_plan_id = ws.workout_plan_id
+                          WHERE wp.member_id = ? AND ws.session_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+                          GROUP BY e.muscle_group HAVING sets > 0 ORDER BY sets DESC");
+$volRows->execute([$memberId]);
+$weeklyVolume = $volRows->fetchAll();
+// رقم الأسبوع الحالي داخل أحدث برنامج نشط (1-based) + عدد أسابيعه
+$curPlan = $pdo->prepare("SELECT start_date, end_date FROM workout_plans
+                          WHERE member_id = ? AND status = 'active'
+                          ORDER BY start_date DESC, workout_plan_id DESC LIMIT 1");
+$curPlan->execute([$memberId]);
+$curPlan = $curPlan->fetch();
+$planWeekIndex = 0; $planTotalWeeks = 0;
+if ($curPlan) {
+    $daysIn = (int)floor((strtotime('today') - strtotime($curPlan['start_date'])) / 86400);
+    $planWeekIndex = $daysIn < 0 ? 1 : (int)floor($daysIn / 7) + 1;
+    if ($curPlan['end_date']) {
+        $span = (int)floor((strtotime($curPlan['end_date']) - strtotime($curPlan['start_date'])) / 86400);
+        $planTotalWeeks = (int)ceil(($span + 1) / 7);
+        if ($planWeekIndex > $planTotalWeeks && $planTotalWeeks > 0) $planWeekIndex = $planTotalWeeks;
+    }
+}
 // قوالب نشطة + اقتراح حسب آخر تقييم
 $tplsActive = $pdo->query("SELECT template_id, title, goal_type, phase, duration_weeks FROM program_templates WHERE active = 1 ORDER BY template_id")->fetchAll();
 $lastRisk = $pdo->prepare("SELECT risk_score FROM assessments WHERE member_id = ? ORDER BY assessment_date DESC LIMIT 1");
@@ -946,6 +973,73 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
     <div><button type="submit">حفظ الإصابة</button></div>
   </form>
   <p class="muted" style="font-size:12px;margin:10px 0 0">شدة high/critical: توقَف برامج العضو النشطة ويتحوّل لـ paused مع إنذار injury ومهمة إحالة طبية عاجلة — تلقائيًا.</p>
+</section>
+
+<!-- ===== التخطيط الذكي ===== -->
+<?php
+// حساب المجاميع: عضلات الإفراط + عدد التمارين الثابتة (يُعاد استخدامها في مؤشر الجاهزية)
+$overloadedGroups = 0;
+foreach ($weeklyVolume as $v) { if (volume_status((int)$v['sets'])[2] === 'over') $overloadedGroups++; }
+$plateauCount = 0; $anyPlateau = false;
+foreach ($loadIntel as $li) {
+    $ld = array_map(fn($r) => (float)$r['load_kg'], $li['rows']);
+    if (is_plateau($ld)) { $plateauCount++; $anyPlateau = true; }
+}
+$plan = progression_plan($planWeekIndex, $rpeAvg, $anyPlateau);
+[$rScore, $rLabel, $rColor] = readiness_score($rpeAvg, $overloadedGroups, $plateauCount);
+$hasIntel = $weeklyVolume || $loadIntel;
+?>
+<section>
+  <h2>🗓️ التخطيط الذكي</h2>
+  <?php if (!$hasIntel): ?>
+    <div class="empty">تظهر خطة التدرّج ومؤشرات الحجم والتعافي بعد تسجيل أحمال فعلية للعضو.</div>
+  <?php else: ?>
+    <div class="grid2" style="margin-bottom:14px">
+      <!-- مؤشر الجاهزية -->
+      <div style="border:1px solid #eef2f7;border-radius:10px;padding:14px">
+        <strong style="font-size:13px;color:#334155">مؤشر الجاهزية للتعافي</strong>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
+          <div style="font-size:32px;font-weight:800;color:<?=$rColor?>"><?=$rScore?><span style="font-size:15px;font-weight:600">/100</span></div>
+          <span class="badge" style="background:<?=$rColor?>"><?=h($rLabel)?></span>
+        </div>
+        <div style="height:8px;background:#eef2f7;border-radius:6px;margin-top:10px;overflow:hidden">
+          <div style="height:100%;width:<?=$rScore?>%;background:<?=$rColor?>"></div>
+        </div>
+        <p class="muted" style="font-size:11px;margin:8px 0 0">يُحسب من متوسط RPE + عضلات الإفراط + التمارين الثابتة.</p>
+      </div>
+      <!-- خطة الأسبوع القادم -->
+      <div style="border:1px solid #eef2f7;border-radius:10px;padding:14px">
+        <strong style="font-size:13px;color:#334155">خطة الأسبوع القادم<?= $planWeekIndex ? ' — الأسبوع ' . $planWeekIndex . ($planTotalWeeks ? '/' . $planTotalWeeks : '') : '' ?></strong>
+        <div style="margin-top:8px"><span class="badge" style="background:<?=$plan[2]?>;font-size:13px"><?=h($plan[0])?></span></div>
+        <p style="font-size:13px;color:#334155;margin:10px 0 0"><?=h($plan[1])?></p>
+        <?php if (!$curPlan): ?><p class="muted" style="font-size:11px;margin:6px 0 0">لا يوجد برنامج نشط — الخطة عامة حسب الإجهاد.</p><?php endif; ?>
+      </div>
+    </div>
+    <!-- حدود الحجم التدريبي -->
+    <h3>📊 الحجم الأسبوعي لكل عضلة (مجموعات) مقابل الحدود العلمية</h3>
+    <?php if (!$weeklyVolume): ?>
+      <div class="empty">لا توجد مجموعات مسجّلة خلال آخر 7 أيام.</div>
+    <?php else: ?>
+      <table>
+        <tr><th>العضلة</th><th>مجموعات/أسبوع</th><th>الحالة</th><th>المقياس (0–24)</th></tr>
+        <?php foreach ($weeklyVolume as $v): [$vl, $vc, $vz] = volume_status((int)$v['sets']); $pct = min(100, (int)$v['sets'] / 24 * 100); ?>
+          <tr>
+            <td><strong><?=h($v['mg'])?></strong></td>
+            <td><strong style="font-size:15px"><?=h($v['sets'])?></strong></td>
+            <td><span class="badge" style="background:<?=$vc?>"><?=h($vl)?></span></td>
+            <td style="min-width:160px">
+              <div style="position:relative;height:10px;background:#eef2f7;border-radius:6px">
+                <div style="height:100%;width:<?=$pct?>%;background:<?=$vc?>;border-radius:6px"></div>
+                <span style="position:absolute;top:-4px;right:<?=(1-10/24)*100?>%;width:1px;height:18px;background:#16a34a" title="MEV 10"></span>
+                <span style="position:absolute;top:-4px;right:<?=(1-20/24)*100?>%;width:1px;height:18px;background:#2563eb" title="MAV 20"></span>
+              </div>
+            </td>
+          </tr>
+        <?php endforeach; ?>
+      </table>
+      <p class="muted" style="font-size:12px;margin:8px 0 0">الحدود: أقل من <strong>10</strong> = تحت الأدنى الفعّال (MEV) · <strong>10–20</strong> مثالي · <strong>20–22</strong> قرب الأقصى (MAV) · أكثر من <strong>22</strong> = إفراط محتمل (MRV).</p>
+    <?php endif; ?>
+  <?php endif; ?>
 </section>
 
 <!-- ===== ذكاء الأحمال ===== -->

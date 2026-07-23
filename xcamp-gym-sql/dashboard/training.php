@@ -70,3 +70,54 @@ function load_trend(?float $last, ?float $best): array {
     if ($last >= $best * 0.95) return ['▬', '#f59e0b', 'قريب من الأفضل'];
     return ['▼', '#dc2626', 'تحت الأفضل'];
 }
+
+// =============================================================================
+// ذكاء تدريبي أعمق: حدود الحجم + خطة التدرّج/التخفيف + مؤشر الجاهزية
+// =============================================================================
+
+/**
+ * حالة الحجم الأسبوعي لعضلة مقابل الحدود العلمية (بالمجموعات/أسبوع):
+ *   MEV≈10 (أدنى فعّال) · MAV≈20 (أعلى تكيّف) · MRV≈22 (أقصى تحمّل).
+ * يرجّع ['label','color','zone'] حيث zone ∈ low|optimal|high|over.
+ */
+function volume_status(int $sets): array {
+    if ($sets < 10) return ['أقل من المطلوب', '#f59e0b', 'low'];
+    if ($sets <= 20) return ['مثالي', '#16a34a', 'optimal'];
+    if ($sets <= 22) return ['قرب الحد الأقصى', '#2563eb', 'high'];
+    return ['إفراط محتمل', '#dc2626', 'over'];
+}
+
+/**
+ * خطة الأسبوع القادم حسب رقم الأسبوع في الدورة (1-based) + متوسط RPE + وجود ثبات.
+ * كل أسبوع رابع = تخفيف. يرجّع ['action','detail','color'].
+ */
+function progression_plan(int $weekIndex, ?float $avgRpe, bool $anyPlateau): array {
+    if ($weekIndex > 0 && $weekIndex % 4 === 0)
+        return ['تخفيف (Deload)', 'أسبوع تخفيف مجدول — قلّل الأحمال/الحجم ~40–50% للتعافي.', '#f59e0b'];
+    if ($avgRpe !== null && $avgRpe >= 9)
+        return ['تخفيف مبكر', 'الإجهاد مرتفع (RPE مرتفع) — أدرِج تخفيفًا قبل موعده.', '#dc2626'];
+    if ($anyPlateau)
+        return ['تغيير المتغيّرات', 'يوجد ثبات — غيّر التمرين أو نطاق التكرارات أو أسلوب التنفيذ.', '#2563eb'];
+    if ($avgRpe !== null && $avgRpe <= 7)
+        return ['زيادة الحمل/الحجم', 'الجهد منخفض — قدّم بزيادة الحمل أو مجموعة إضافية.', '#16a34a'];
+    return ['تقدّم تدريجي', 'حافظ على التدرّج الأسبوعي مع زيادة بسيطة في الحمل.', '#16a34a'];
+}
+
+/**
+ * مؤشر جاهزية العضو للتعافي (0–100) من متوسط RPE + عدد عضلات الإفراط + عدد الثبات.
+ * يرجّع ['score','label','color'].
+ */
+function readiness_score(?float $avgRpe, int $overloadedGroups, int $plateauCount): array {
+    $s = 100;
+    if ($avgRpe !== null) {
+        if ($avgRpe >= 9) $s -= 30;
+        elseif ($avgRpe >= 8) $s -= 12;
+        elseif ($avgRpe <= 6) $s += 0;
+    }
+    $s -= $overloadedGroups * 15;
+    $s -= $plateauCount * 8;
+    $s = max(0, min(100, $s));
+    if ($s >= 75) return [$s, 'جاهز للتقدّم', '#16a34a'];
+    if ($s >= 50) return [$s, 'تعافٍ متوسط', '#f59e0b'];
+    return [$s, 'يحتاج راحة/تخفيف', '#dc2626'];
+}
