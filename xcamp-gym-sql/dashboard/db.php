@@ -6,6 +6,29 @@
 
 if (session_status() === PHP_SESSION_NONE) session_start();
 
+// بدائل آمنة لدوال mbstring في حال عدم تثبيت الامتداد (utf8mb4-aware)
+if (!function_exists('mb_strtolower')) {
+    function mb_strtolower($s, $enc = null) { return strtolower((string)$s); }
+}
+if (!function_exists('mb_strlen')) {
+    function mb_strlen($s, $enc = null) {
+        return count(preg_split('//u', (string)$s, -1, PREG_SPLIT_NO_EMPTY) ?: []);
+    }
+}
+if (!function_exists('mb_substr')) {
+    function mb_substr($s, $start, $length = null, $enc = null) {
+        $chars = preg_split('//u', (string)$s, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        return implode('', array_slice($chars, $start, $length));
+    }
+}
+if (!function_exists('mb_strimwidth')) {
+    function mb_strimwidth($s, $start, $width, $marker = '', $enc = null) {
+        $chars = preg_split('//u', (string)$s, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        $out = implode('', array_slice($chars, $start, $width));
+        return (count($chars) - $start > $width) ? $out . $marker : $out;
+    }
+}
+
 require_once __DIR__ . '/training.php';   // ذكاء الأحمال: دوال الحسابات التدريبية
 
 function h($v) { return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8'); }
