@@ -6,6 +6,8 @@
 
 if (session_status() === PHP_SESSION_NONE) session_start();
 
+require_once __DIR__ . '/training.php';   // ذكاء الأحمال: دوال الحسابات التدريبية
+
 function h($v) { return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8'); }
 
 function db(): PDO {

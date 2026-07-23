@@ -557,6 +557,31 @@ $tonnage = $pdo->prepare("SELECT e.muscle_group,
     GROUP BY e.muscle_group HAVING t_now > 0 OR t_prev > 0 ORDER BY t_now DESC");
 $tonnage->execute([$memberId]);
 $tonnage = $tonnage->fetchAll();
+// ذكاء الأحمال: كل الأحمال المسجّلة لكل تمرين (الأحدث أولًا) لحساب الاتجاه/1RM/الثبات/المقترح
+$liRows = $pdo->prepare("SELECT e.exercise_id, e.name, se.load_kg, se.reps, se.rpe, ws.session_date
+                         FROM session_exercises se
+                         JOIN exercises e ON e.exercise_id = se.exercise_id
+                         JOIN workout_sessions ws ON ws.session_id = se.session_id
+                         JOIN workout_plans wp ON wp.workout_plan_id = ws.workout_plan_id
+                         WHERE wp.member_id = ? AND se.load_kg IS NOT NULL
+                         ORDER BY e.name, ws.session_date DESC, se.session_exercise_id DESC");
+$liRows->execute([$memberId]);
+$loadIntel = [];    // exercise_id => ['name','rows'=>[...]]
+foreach ($liRows as $r) {
+    $eid = (int)$r['exercise_id'];
+    if (!isset($loadIntel[$eid])) $loadIntel[$eid] = ['name' => $r['name'], 'rows' => []];
+    $loadIntel[$eid]['rows'][] = $r;
+}
+// إنذار تخفيف حمل (deload): متوسط آخر ~5 قيم RPE ≥ 9
+$rpeAvg = $pdo->prepare("SELECT AVG(rpe) FROM (
+                            SELECT se.rpe FROM session_exercises se
+                            JOIN workout_sessions ws ON ws.session_id = se.session_id
+                            JOIN workout_plans wp ON wp.workout_plan_id = ws.workout_plan_id
+                            WHERE wp.member_id = ? AND se.rpe IS NOT NULL
+                            ORDER BY ws.session_date DESC, se.session_exercise_id DESC LIMIT 5) t");
+$rpeAvg->execute([$memberId]);
+$rpeAvg = $rpeAvg->fetchColumn();
+$deload = $rpeAvg !== null && $rpeAvg !== false && (float)$rpeAvg >= 9;
 // قوالب نشطة + اقتراح حسب آخر تقييم
 $tplsActive = $pdo->query("SELECT template_id, title, goal_type, phase, duration_weeks FROM program_templates WHERE active = 1 ORDER BY template_id")->fetchAll();
 $lastRisk = $pdo->prepare("SELECT risk_score FROM assessments WHERE member_id = ? ORDER BY assessment_date DESC LIMIT 1");
@@ -921,6 +946,46 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
     <div><button type="submit">حفظ الإصابة</button></div>
   </form>
   <p class="muted" style="font-size:12px;margin:10px 0 0">شدة high/critical: توقَف برامج العضو النشطة ويتحوّل لـ paused مع إنذار injury ومهمة إحالة طبية عاجلة — تلقائيًا.</p>
+</section>
+
+<!-- ===== ذكاء الأحمال ===== -->
+<section>
+  <h2>🧠 ذكاء الأحمال</h2>
+  <?php if ($deload): ?>
+    <div style="background:#fef3c7;color:#92400e;padding:12px 16px;border-radius:10px;margin-bottom:14px;font-weight:600">
+      ⚠️ إنذار تحميل زائد — متوسط RPE لآخر جلسات = <?=h(round((float)$rpeAvg,1))?>/10. يُنصح بأسبوع تخفيف حمل (Deload): قلّل الأحمال ~10–20% أو عدد المجموعات.
+    </div>
+  <?php endif; ?>
+  <?php if (!$loadIntel): ?>
+    <div class="empty">لا توجد أحمال مسجّلة بعد. سجّل الأداء الفعلي من <strong>وضع بدء الجلسة</strong> لتظهر التحليلات والمقترحات.</div>
+  <?php else: ?>
+    <table>
+      <tr><th>التمرين</th><th>آخر حمل</th><th>المنطقة</th><th>1RM تقديري</th><th>الاتجاه</th><th>الحمل المقترح</th><th>ملاحظة</th></tr>
+      <?php foreach ($loadIntel as $li):
+        $rows = $li['rows']; $last = $rows[0];
+        $lastLd = (float)$last['load_kg'];
+        $lastRp = $last['rpe'] !== null ? (int)$last['rpe'] : null;
+        $repsI  = reps_to_int($last['reps']);
+        $orm    = epley_1rm($lastLd, $repsI);
+        $loadsDesc = array_map(fn($r) => (float)$r['load_kg'], $rows);
+        $best   = max($loadsDesc);
+        [$tArrow, $tColor, $tLabel] = load_trend($lastLd, $best);
+        $sug    = suggest_next_load($lastLd, $lastRp);
+        $plateau = is_plateau($loadsDesc);
+      ?>
+        <tr>
+          <td><strong><?=h($li['name'])?></strong></td>
+          <td><?=h($lastLd)?>كجم × <?=h($last['reps'])?><?= $lastRp !== null ? ' <span class="muted">@RPE '.$lastRp.'</span>' : '' ?></td>
+          <td><span class="muted"><?=h(load_zone($repsI))?></span></td>
+          <td><?= $orm !== null ? '<strong>'.h($orm).'</strong> كجم' : '<span class="muted">—</span>' ?></td>
+          <td style="color:<?=$tColor?>;font-weight:700"><?=$tArrow?> <span style="font-weight:400;font-size:12px"><?=h($tLabel)?></span></td>
+          <td><?php if ($sug['load'] !== null): ?><span style="background:<?=$sug['color']?>;color:#fff;padding:2px 10px;border-radius:999px;font-weight:700"><?=h($sug['load'])?>كجم</span><?php else: ?><span class="muted">—</span><?php endif; ?></td>
+          <td style="font-size:12px;color:<?=$sug['color']?>"><?=h($sug['reason'])?><?php if ($plateau): ?> <span style="background:#fef3c7;color:#92400e;padding:1px 8px;border-radius:999px;font-weight:700">⚠️ ثبات</span><?php endif; ?></td>
+        </tr>
+      <?php endforeach; ?>
+    </table>
+    <p class="muted" style="font-size:12px;margin:10px 0 0">القواعد: 1RM بمعادلة Epley · المقترح من آخر RPE (≤6 زد ~5% · 7 ‎+2.5% · 8 ثبّت · ≥9 خفّف ~5%) · الثبات = 3 جلسات بلا زيادة.</p>
+  <?php endif; ?>
 </section>
 
 <!-- ===== متابعة التقدّم ===== -->

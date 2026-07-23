@@ -93,6 +93,22 @@ $exs = $pdo->prepare("SELECT se.*, e.name AS ex_name, e.muscle_group AS ex_group
                       WHERE se.session_id = ? ORDER BY se.sort_order");
 $exs->execute([$sid]);
 $exs = $exs->fetchAll();
+
+// سجلّ الأحمال السابقة لكل تمرين لهذا العضو (من جلسات أخرى، الأحدث أولًا) — لذكاء الأحمال
+$hist = [];
+if ($exs) {
+    $exIds = array_values(array_unique(array_map(fn($x) => (int)$x['exercise_id'], $exs)));
+    $ph = implode(',', array_fill(0, count($exIds), '?'));
+    $hq = $pdo->prepare("SELECT se.exercise_id, se.load_kg, se.reps, se.rpe, ws.session_date
+                         FROM session_exercises se
+                         JOIN workout_sessions ws ON ws.session_id = se.session_id
+                         JOIN workout_plans wp ON wp.workout_plan_id = ws.workout_plan_id
+                         WHERE wp.member_id = ? AND se.exercise_id IN ($ph)
+                           AND se.session_id <> ? AND se.load_kg IS NOT NULL
+                         ORDER BY ws.session_date DESC, se.session_exercise_id DESC");
+    $hq->execute(array_merge([(int)$sess['member_id']], $exIds, [$sid]));
+    foreach ($hq as $r) $hist[(int)$r['exercise_id']][] = $r;
+}
 $q = $pdo->prepare("SELECT completion_status FROM workout_sessions WHERE session_id = ?");
 $q->execute([$sid]);
 $curStatus = $q->fetchColumn();
@@ -117,7 +133,20 @@ $memberCoach = (int)$sess['member_coach'];
   <section><div class="empty">لا توجد تمارين مُهيكلة لهذه الجلسة — أضِفها من صفحة العضو.</div></section>
 <?php endif; ?>
 
-<?php foreach ($exs as $i => $x): ?>
+<?php
+foreach ($exs as $i => $x):
+  // ذكاء الأحمال: آخر أداء مسجّل لهذا التمرين + تقدير 1RM + الحمل المقترح
+  $rows   = $hist[(int)$x['exercise_id']] ?? [];
+  $last   = $rows[0] ?? null;
+  $lastLd = $last ? (float)$last['load_kg'] : null;
+  $lastRp = $last && $last['rpe'] !== null ? (int)$last['rpe'] : null;
+  $orm    = $last ? epley_1rm($lastLd, reps_to_int($last['reps'])) : null;
+  $sug    = suggest_next_load($lastLd, $lastRp);
+  $loadsDesc = array_map(fn($r) => (float)$r['load_kg'], $rows);
+  $best   = $loadsDesc ? max($loadsDesc) : null;
+  $plateau = is_plateau($loadsDesc);
+  [$tArrow, $tColor, $tLabel] = load_trend($lastLd, $best);
+?>
 <section style="padding:14px 18px">
   <form method="post" style="margin:0"><?=csrf_field()?>
     <input type="hidden" name="action" value="save_ex">
@@ -125,6 +154,23 @@ $memberCoach = (int)$sess['member_coach'];
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
       <strong style="font-size:16px"><?=($i+1)?>. <?=h($x['ex_name'])?></strong>
       <span class="muted" style="font-size:12px"><?=h($x['ex_group'])?><?= $x['rest_sec'] ? ' · راحة ' . h($x['rest_sec']) . 'ث' : '' ?><?= $x['notes'] && $x['load_kg'] === null ? ' · حمل مقترح: ' . h($x['notes']) : '' ?></span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:#f8fafc;border:1px solid #eef2f7;border-radius:8px;font-size:12px">
+      <span style="font-weight:700;color:#334155">🧠 ذكاء الأحمال:</span>
+      <?php if ($last): ?>
+        <span class="muted">آخر مرة: <strong style="color:#0f172a"><?=h($lastLd)?>كجم</strong>×<?=h($last['reps'])?><?= $lastRp !== null ? ' @RPE '.$lastRp : '' ?></span>
+        <?php if ($orm): ?><span class="muted">· 1RM≈<strong style="color:#0f172a"><?=h($orm)?></strong></span><?php endif; ?>
+        <span style="color:<?=$tColor?>">· <?=$tArrow?> <?=h($tLabel)?></span>
+      <?php else: ?>
+        <span class="muted">لا سجل سابق لهذا التمرين — سجّل الأداء لبدء التتبّع.</span>
+      <?php endif; ?>
+      <?php if ($sug['load'] !== null): ?>
+        <span style="margin-inline-start:auto;background:<?=$sug['color']?>;color:#fff;padding:3px 10px;border-radius:999px;font-weight:700">المقترح: <?=h($sug['load'])?>كجم</span>
+        <span style="color:<?=$sug['color']?>"><?=h($sug['reason'])?></span>
+      <?php else: ?>
+        <span style="margin-inline-start:auto;color:<?=$sug['color']?>"><?=h($sug['reason'])?></span>
+      <?php endif; ?>
+      <?php if ($plateau): ?><span style="background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:999px;font-weight:700">⚠️ ثبات — غيّر المتغيرات</span><?php endif; ?>
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px;align-items:end">
       <div><label style="font-size:11px;color:#475569;display:block">مجموعات</label><input type="number" name="sets" value="<?=h($x['sets'])?>" min="1" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;font-size:15px"></div>
