@@ -19,6 +19,10 @@ $MTYPES    = ['welcome','followup','reminder','winback','renewal','progress','wa
 $MSTATUS   = ['sent','delivered','failed','replied'];
 $MILTYPES  = ['first_week','first_month','weight_loss','strength_gain','attendance_streak','program_completion','renewal','upgrade'];
 $REWARDS   = ['none','badge','gift','promotion','discount'];
+$ISEVER    = ['low','medium','high','critical'];
+$ISTAT     = ['active','recovering','resolved','unknown'];
+$MSTATUSES = ['new','onboarding','active','corrective','at_risk','paused','expired','reactivated','upgraded'];
+$GENDERS   = ['male','female','other'];
 
 $error = null;
 try { $pdo = db(); } catch (Throwable $e) { $error = $e->getMessage(); }
@@ -41,6 +45,7 @@ function member_allowed(PDO $pdo, array $me, int $memberId): bool {
 // ---- معالجة النماذج (POST) ثم إعادة توجيه (PRG) ----
 if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
+        csrf_check();
         $act = $_POST['action'] ?? '';
 
         // إغلاق مهمة: الصلاحية على المهمة نفسها (قد لا ترتبط بعضو)
@@ -72,6 +77,8 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $targetMember = (int)$pdo->query("SELECT member_id FROM supplements WHERE supplement_id = " . (int)$_POST['supplement_id'])->fetchColumn();
         } elseif ($act === 'delete_progress') {
             $targetMember = (int)$pdo->query("SELECT member_id FROM progress_tracking WHERE progress_id = " . (int)$_POST['progress_id'])->fetchColumn();
+        } elseif ($act === 'set_injury_status') {
+            $targetMember = (int)$pdo->query("SELECT member_id FROM injury_history WHERE injury_id = " . (int)$_POST['injury_id'])->fetchColumn();
         }
         if (!member_allowed($pdo, $me, $targetMember)) throw new RuntimeException('غير مسموح بتعديل هذا العضو.');
 
@@ -133,8 +140,21 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_POST['next_followup_date'] ?: null,
             ]);
         } elseif ($act === 'add_progress') {
-            $pdo->prepare("INSERT INTO progress_tracking (member_id, record_date, weight, body_fat, muscle_mass, waist, chest, hips, performance_note)
-                           VALUES (?,?,?,?,?,?,?,?,?)")->execute([
+            // صورة اختيارية (jpg/png/webp حتى 5MB) تُحفظ في uploads/progress
+            $photoRef = null;
+            if (!empty($_FILES['photo']['tmp_name']) && is_uploaded_file($_FILES['photo']['tmp_name'])) {
+                if (($_FILES['photo']['size'] ?? 0) > 5 * 1024 * 1024) throw new RuntimeException('حجم الصورة يتجاوز 5MB.');
+                $mime = (new finfo(FILEINFO_MIME_TYPE))->file($_FILES['photo']['tmp_name']);
+                $extMap = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
+                if (!isset($extMap[$mime])) throw new RuntimeException('صيغة الصورة غير مدعومة (jpg/png/webp فقط).');
+                $dir = __DIR__ . '/uploads/progress';
+                if (!is_dir($dir) && !mkdir($dir, 0775, true)) throw new RuntimeException('تعذّر إنشاء مجلد الصور.');
+                $fname = 'm' . $targetMember . '_' . preg_replace('/[^0-9-]/', '', $_POST['record_date']) . '_' . bin2hex(random_bytes(4)) . '.' . $extMap[$mime];
+                if (!move_uploaded_file($_FILES['photo']['tmp_name'], "$dir/$fname")) throw new RuntimeException('تعذّر حفظ الصورة.');
+                $photoRef = 'uploads/progress/' . $fname;
+            }
+            $pdo->prepare("INSERT INTO progress_tracking (member_id, record_date, weight, body_fat, muscle_mass, waist, chest, hips, performance_note, photo_ref)
+                           VALUES (?,?,?,?,?,?,?,?,?,?)")->execute([
                 $targetMember, $_POST['record_date'],
                 $_POST['weight'] !== '' ? $_POST['weight'] : null,
                 $_POST['body_fat'] !== '' ? $_POST['body_fat'] : null,
@@ -143,7 +163,38 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_POST['chest'] !== '' ? $_POST['chest'] : null,
                 $_POST['hips'] !== '' ? $_POST['hips'] : null,
                 trim($_POST['performance_note'] ?? '') ?: null,
+                $photoRef,
             ]);
+        } elseif ($act === 'update_member') {
+            $name = trim($_POST['full_name'] ?? '');
+            if ($name === '') throw new RuntimeException('اسم العضو مطلوب.');
+            $pdo->prepare("UPDATE members SET full_name=?, gender=?, birth_date=?, phone=?, email=?, address=?, job_title=?, preferred_time=?, goal_summary=?, status=?, notes=? WHERE member_id=?")
+                ->execute([
+                    $name,
+                    $_POST['gender'] !== '' ? $_POST['gender'] : null,
+                    $_POST['birth_date'] ?: null,
+                    trim($_POST['phone'] ?? '') ?: null,
+                    trim($_POST['email'] ?? '') ?: null,
+                    trim($_POST['address'] ?? '') ?: null,
+                    trim($_POST['job_title'] ?? '') ?: null,
+                    trim($_POST['preferred_time'] ?? '') ?: null,
+                    trim($_POST['goal_summary'] ?? '') ?: null,
+                    $_POST['status'],
+                    trim($_POST['notes'] ?? '') ?: null,
+                    $targetMember,
+                ]);
+        } elseif ($act === 'add_injury') {
+            // إدخال الإصابة يشغّل sp_handle_injury_event عبر الـ trigger
+            // (high/critical: إيقاف برامج العضو + العضو paused + إنذار injury + مهمة إحالة طبية عاجلة)
+            $pdo->prepare("INSERT INTO injury_history (member_id, injury_date, body_area, injury_type, severity, current_status, doctor_clearance, notes)
+                           VALUES (?,?,?,?,?,?,?,?)")->execute([
+                $targetMember, $_POST['injury_date'], trim($_POST['body_area']),
+                trim($_POST['injury_type'] ?? '') ?: null, $_POST['severity'], $_POST['current_status'],
+                isset($_POST['doctor_clearance']) ? 1 : 0, trim($_POST['notes'] ?? '') ?: null,
+            ]);
+        } elseif ($act === 'set_injury_status') {
+            $pdo->prepare("UPDATE injury_history SET current_status = ?, doctor_clearance = ? WHERE injury_id = ?")
+                ->execute([$_POST['current_status'], isset($_POST['doctor_clearance']) ? 1 : 0, (int)$_POST['injury_id']]);
         } elseif ($act === 'set_session_status') {
             $pdo->prepare("UPDATE workout_sessions SET completion_status = ? WHERE session_id = ?")
                 ->execute([$_POST['completion_status'], (int)$_POST['session_id']]);
@@ -197,7 +248,9 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
         header("Location: captains.php?coach={$coachId}&member={$memberId}&ok=1");
         exit;
     } catch (Throwable $e) {
-        $error = 'تعذّر الحفظ: ' . $e->getMessage();
+        $error = str_contains($e->getMessage(), 'Duplicate entry')
+            ? 'قيمة مكررة: الهاتف أو البريد مستخدم لعضو آخر بالفعل.'
+            : 'تعذّر الحفظ: ' . $e->getMessage();
     }
 }
 
@@ -233,14 +286,14 @@ if (!$coach) { echo '<div class="err">الكابتن غير موجود.</div>'; 
 // ===================== 2) قائمة أعضاء الكابتن =====================
 if (!$memberId) {
     $q = trim($_GET['q'] ?? '');
-    if ($q !== '') {
-        $members = $pdo->prepare("SELECT member_id, full_name, status, goal_summary FROM members
-                                  WHERE coach_id = ? AND (full_name LIKE ? OR phone LIKE ?) ORDER BY member_id");
-        $members->execute([$coachId, "%$q%", "%$q%"]);
-    } else {
-        $members = $pdo->prepare("SELECT member_id, full_name, status, goal_summary FROM members WHERE coach_id = ? ORDER BY member_id");
-        $members->execute([$coachId]);
-    }
+    $sql = "SELECT m.member_id, m.full_name, m.status, m.goal_summary,
+                   (SELECT MAX(a.attendance_date) FROM daily_attendance a WHERE a.member_id = m.member_id AND a.attended = 1) AS last_att,
+                   (SELECT a2.risk_score FROM assessments a2 WHERE a2.member_id = m.member_id ORDER BY a2.assessment_date DESC LIMIT 1) AS risk
+            FROM members m WHERE m.coach_id = ?";
+    $args = [$coachId];
+    if ($q !== '') { $sql .= " AND (m.full_name LIKE ? OR m.phone LIKE ?)"; $args[] = "%$q%"; $args[] = "%$q%"; }
+    $members = $pdo->prepare($sql . " ORDER BY m.member_id");
+    $members->execute($args);
     $members = $members->fetchAll();
     if (!$isCoach) echo '<div class="crumb"><a class="link" href="captains.php">الكباتن</a> / <strong>' . h($coach['full_name']) . '</strong></div>';
     echo '<section><h2>أعضاء الكابتن ' . h($coach['full_name']) . '</h2>';
@@ -252,10 +305,13 @@ if (!$memberId) {
        . '</form>';
     if (!$members) echo '<div class="empty">' . ($q !== '' ? 'لا نتائج مطابقة للبحث.' : 'لا يوجد أعضاء مسنَدون.') . '</div>';
     else {
-        echo '<table><tr><th>#</th><th>الاسم</th><th>الحالة</th><th>الهدف</th><th></th></tr>';
+        echo '<table><tr><th>#</th><th>الاسم</th><th>الحالة</th><th>درجة الخطر</th><th>آخر حضور</th><th>الهدف</th><th></th></tr>';
         foreach ($members as $m) {
-            echo '<tr><td>' . h($m['member_id']) . '</td><td>' . h($m['full_name']) . '</td><td><span class="badge">' . h($m['status']) . '</span></td><td class="muted">' . h($m['goal_summary']) .
-                 '</td><td><a class="link" href="captains.php?coach=' . $coachId . '&member=' . (int)$m['member_id'] . '">البرامج والتغذية والتقدّم ←</a></td></tr>';
+            $riskColor = $m['risk'] === null ? '#94a3b8' : ($m['risk'] >= 80 ? '#dc2626' : ($m['risk'] >= 60 ? '#f59e0b' : '#16a34a'));
+            echo '<tr><td>' . h($m['member_id']) . '</td><td>' . h($m['full_name']) . '</td><td><span class="badge">' . h($m['status']) . '</span></td>' .
+                 '<td><strong style="color:' . $riskColor . '">' . h($m['risk'] ?? '—') . '</strong></td>' .
+                 '<td class="muted">' . h($m['last_att'] ?? '—') . '</td><td class="muted">' . h($m['goal_summary']) .
+                 '</td><td><a class="link" href="captains.php?coach=' . $coachId . '&member=' . (int)$m['member_id'] . '">فتح الملف ←</a></td></tr>';
         }
         echo '</table>';
     }
@@ -277,9 +333,56 @@ if (!$memberId) {
             echo '<tr><td>' . h($t['task_id']) . '</td><td>' . h($t['member_name'] ?? '—') . '</td><td>' . h($t['task_type']) .
                  '</td><td><span class="badge" style="background:' . ($prB[$t['priority']] ?? '#6b7280') . '">' . h($t['priority']) . '</span></td>' .
                  '<td class="muted">' . h($t['due_at'] ?? '') . '</td><td class="muted">' . h($t['notes']) . '</td>' .
-                 '<td><form method="post" style="margin:0"><input type="hidden" name="action" value="complete_task">' .
+                 '<td><form method="post" style="margin:0">' . csrf_field() . '<input type="hidden" name="action" value="complete_task">' .
                  '<input type="hidden" name="task_id" value="' . (int)$t['task_id'] . '">' .
                  '<button type="submit" style="background:#16a34a;color:#fff;border:0;padding:5px 12px;border-radius:7px;font-size:12px;cursor:pointer">✓ إنهاء</button></form></td></tr>';
+        }
+        echo '</table>';
+    }
+    echo '</section>';
+
+    // ---- 📊 تقرير الكابتن ----
+    $rep = $pdo->prepare("SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN m.status IN ('active','onboarding','reactivated','upgraded') THEN 1 ELSE 0 END) AS active_cnt,
+        SUM(CASE WHEN m.status IN ('at_risk','corrective') THEN 1 ELSE 0 END) AS risk_cnt,
+        (SELECT COUNT(*) FROM retention_flags rf JOIN members m2 ON m2.member_id = rf.member_id
+          WHERE m2.coach_id = c.cid AND rf.status IN ('open','in_progress')) AS open_flags,
+        (SELECT COUNT(*) FROM daily_attendance a JOIN members m3 ON m3.member_id = a.member_id
+          WHERE m3.coach_id = c.cid AND a.attended = 1 AND a.attendance_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)) AS visits_7d,
+        (SELECT COUNT(*) FROM workout_sessions ws JOIN workout_plans wp ON wp.workout_plan_id = ws.workout_plan_id
+          WHERE wp.coach_id = c.cid AND ws.completion_status = 'completed'
+            AND ws.session_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)) AS done_sessions_7d
+        FROM (SELECT ? AS cid) c LEFT JOIN members m ON m.coach_id = c.cid GROUP BY c.cid");
+    $rep->execute([$coachId]);
+    $rep = $rep->fetch() ?: [];
+    $reviews = $pdo->prepare("SELECT m.member_id, m.full_name, MAX(a.next_review_date) AS review_date
+                              FROM assessments a JOIN members m ON m.member_id = a.member_id
+                              WHERE m.coach_id = ? AND a.next_review_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 14 DAY)
+                              GROUP BY m.member_id, m.full_name ORDER BY review_date");
+    $reviews->execute([$coachId]);
+    $reviews = $reviews->fetchAll();
+    $repCards = [
+        ['أعضاء مسنَدون', $rep['total'] ?? 0, '#2563eb'],
+        ['نشطون', $rep['active_cnt'] ?? 0, '#16a34a'],
+        ['معرّضون للخطر', $rep['risk_cnt'] ?? 0, '#f59e0b'],
+        ['مهام مفتوحة', count($ctasks), '#7c3aed'],
+        ['إنذارات مفتوحة', $rep['open_flags'] ?? 0, '#db2777'],
+        ['زيارات آخر 7 أيام', $rep['visits_7d'] ?? 0, '#0891b2'],
+        ['جلسات مكتملة (7 أيام)', $rep['done_sessions_7d'] ?? 0, '#16a34a'],
+    ];
+    echo '<section><h2>📊 تقرير الكابتن</h2><div class="kpis" style="margin-bottom:8px">';
+    foreach ($repCards as [$l, $n, $clr]) {
+        echo '<div class="card" style="--c:' . $clr . '"><div class="n" style="color:' . $clr . '">' . h($n) . '</div><div class="l">' . h($l) . '</div></div>';
+    }
+    echo '</div>';
+    echo '<h3>📆 مراجعات تقييم قادمة (14 يومًا)</h3>';
+    if (!$reviews) echo '<div class="empty">لا توجد مراجعات مستحقة قريبًا.</div>';
+    else {
+        echo '<table><tr><th>العضو</th><th>موعد المراجعة</th><th></th></tr>';
+        foreach ($reviews as $rv) {
+            echo '<tr><td>' . h($rv['full_name']) . '</td><td>' . h($rv['review_date']) . '</td>' .
+                 '<td><a class="link" href="captains.php?coach=' . $coachId . '&member=' . (int)$rv['member_id'] . '">فتح الملف ←</a></td></tr>';
         }
         echo '</table>';
     }
@@ -322,10 +425,43 @@ $msgs = $pdo->prepare("SELECT * FROM messages_log WHERE member_id = ? ORDER BY s
 $msgs->execute([$memberId]); $msgs = $msgs->fetchAll();
 $miles = $pdo->prepare("SELECT * FROM milestones WHERE member_id = ? ORDER BY milestone_date DESC");
 $miles->execute([$memberId]); $miles = $miles->fetchAll();
+$injuries = $pdo->prepare("SELECT * FROM injury_history WHERE member_id = ? ORDER BY injury_date DESC");
+$injuries->execute([$memberId]); $injuries = $injuries->fetchAll();
 
 $crumb = '<a class="link" href="captains.php?coach=' . $coachId . '">' . h($coach['full_name']) . '</a> / <strong>' . h($member['full_name']) . '</strong>';
 echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.php">الكباتن</a> / ') . $crumb . '</div>';
 ?>
+
+<!-- ===== بيانات العضو ===== -->
+<section>
+  <h2>👤 <?=h($member['full_name'])?>
+    <span class="badge" style="margin-inline-start:6px"><?=h($member['status'])?></span>
+  </h2>
+  <div class="muted" style="font-size:13px;line-height:1.9">
+    📞 <?=h($member['phone'] ?? '—')?> · ✉️ <?=h($member['email'] ?? '—')?> · 🗓 انضم: <?=h($member['join_date'])?>
+    · 🎯 <?=h($member['goal_summary'] ?? '—')?> · ⏰ <?=h($member['preferred_time'] ?? '—')?>
+    <?php if ($member['notes']): ?><br>📝 <?=h($member['notes'])?><?php endif; ?>
+  </div>
+  <details style="margin-top:10px"><summary class="link" style="cursor:pointer;font-size:13px">✏️ تعديل بيانات العضو</summary>
+    <form class="frm" method="post"><?=csrf_field()?>
+      <input type="hidden" name="action" value="update_member">
+      <input type="hidden" name="member_id" value="<?=$memberId?>">
+      <div><label>الاسم الكامل *</label><input name="full_name" value="<?=h($member['full_name'])?>" required></div>
+      <div><label>النوع</label><select name="gender"><option value="">—</option>
+        <?php foreach ($GENDERS as $g): ?><option <?= $member['gender']===$g?'selected':'' ?>><?=h($g)?></option><?php endforeach; ?></select></div>
+      <div><label>تاريخ الميلاد</label><input type="date" name="birth_date" value="<?=h($member['birth_date'])?>"></div>
+      <div><label>الهاتف</label><input name="phone" value="<?=h($member['phone'])?>"></div>
+      <div><label>البريد</label><input type="email" name="email" value="<?=h($member['email'])?>"></div>
+      <div><label>العنوان</label><input name="address" value="<?=h($member['address'])?>"></div>
+      <div><label>الوظيفة</label><input name="job_title" value="<?=h($member['job_title'])?>"></div>
+      <div><label>الوقت المفضّل</label><input name="preferred_time" value="<?=h($member['preferred_time'])?>"></div>
+      <div><label>الهدف</label><input name="goal_summary" value="<?=h($member['goal_summary'])?>"></div>
+      <div><label>الحالة</label><?=sel('status',$MSTATUSES,$member['status'])?></div>
+      <div style="grid-column:1/-1"><label>ملاحظات</label><input name="notes" value="<?=h($member['notes'])?>"></div>
+      <div><button type="submit">حفظ التعديلات</button></div>
+    </form>
+  </details>
+</section>
 
 <div class="grid2">
   <!-- ===== برامج التمرين ===== -->
@@ -337,13 +473,13 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <strong><?=h($p['goal_type'])?></strong> · <span class="muted"><?=h($p['phase'])?></span>
           <span class="badge" style="background:<?= $p['status']==='active'?'#16a34a':'#6b7280' ?>"><?=h($p['status'])?></span>
-          <form method="post" style="margin:0;display:flex;gap:5px;margin-inline-start:auto">
+          <form method="post" style="margin:0;display:flex;gap:5px;margin-inline-start:auto"><?=csrf_field()?>
             <input type="hidden" name="action" value="set_wplan_status">
             <input type="hidden" name="workout_plan_id" value="<?=$p['workout_plan_id']?>">
             <?=sel('status',$PSTATUS,$p['status'])?>
             <button type="submit" style="background:#2563eb;color:#fff;border:0;padding:4px 10px;border-radius:7px;font-size:12px;cursor:pointer">تحديث</button>
           </form>
-          <form method="post" style="margin:0" onsubmit="return confirm('حذف البرنامج وكل جلساته؟')">
+          <form method="post" style="margin:0" onsubmit="return confirm('حذف البرنامج وكل جلساته؟')"><?=csrf_field()?>
             <input type="hidden" name="action" value="delete_wplan">
             <input type="hidden" name="workout_plan_id" value="<?=$p['workout_plan_id']?>">
             <button type="submit" style="background:#dc2626;color:#fff;border:0;padding:4px 10px;border-radius:7px;font-size:12px;cursor:pointer">🗑 حذف</button>
@@ -354,13 +490,13 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
           <table style="margin-top:6px"><tr><th>التاريخ</th><th>المجموعة</th><th>تمارين</th><th>الحالة</th><th></th></tr>
             <?php foreach ($ss as $s): ?>
               <tr><td><?=h($s['session_date'])?></td><td><?=h($s['muscle_group'])?></td><td class="muted"><?=h($s['exercises'])?></td>
-                <td><form method="post" style="margin:0;display:flex;gap:4px">
+                <td><form method="post" style="margin:0;display:flex;gap:4px"><?=csrf_field()?>
                   <input type="hidden" name="action" value="set_session_status">
                   <input type="hidden" name="session_id" value="<?=$s['session_id']?>">
                   <?=sel('completion_status',$CSTATUS,$s['completion_status'])?>
                   <button type="submit" style="background:#2563eb;color:#fff;border:0;padding:3px 8px;border-radius:6px;font-size:11px;cursor:pointer">✓</button>
                 </form></td>
-                <td><form method="post" style="margin:0" onsubmit="return confirm('حذف الجلسة؟')">
+                <td><form method="post" style="margin:0" onsubmit="return confirm('حذف الجلسة؟')"><?=csrf_field()?>
                   <input type="hidden" name="action" value="delete_session">
                   <input type="hidden" name="session_id" value="<?=$s['session_id']?>">
                   <button type="submit" style="background:none;border:0;color:#dc2626;cursor:pointer;font-size:13px">🗑</button>
@@ -369,7 +505,7 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
           </table>
         <?php endif; ?>
         <details style="margin-top:6px"><summary class="link" style="cursor:pointer;font-size:13px">➕ إضافة جلسة</summary>
-          <form class="frm" method="post">
+          <form class="frm" method="post"><?=csrf_field()?>
             <input type="hidden" name="action" value="add_workout_session">
             <input type="hidden" name="workout_plan_id" value="<?=$p['workout_plan_id']?>">
             <div><label>التاريخ</label><input type="date" name="session_date" required></div>
@@ -386,7 +522,7 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
       </div>
     <?php endforeach; ?>
     <h3>➕ إضافة برنامج تمرين جديد</h3>
-    <form class="frm" method="post">
+    <form class="frm" method="post"><?=csrf_field()?>
       <input type="hidden" name="action" value="add_workout_plan">
       <input type="hidden" name="member_id" value="<?=$memberId?>">
       <input type="hidden" name="coach_id" value="<?=$coachId?>">
@@ -409,13 +545,13 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <strong><?=h($n['calories'] ?? '—')?> سعرة</strong>
           <span class="badge" style="background:<?= $n['status']==='active'?'#16a34a':'#6b7280' ?>"><?=h($n['status'])?></span>
-          <form method="post" style="margin:0;display:flex;gap:5px;margin-inline-start:auto">
+          <form method="post" style="margin:0;display:flex;gap:5px;margin-inline-start:auto"><?=csrf_field()?>
             <input type="hidden" name="action" value="set_nplan_status">
             <input type="hidden" name="nutrition_plan_id" value="<?=$n['nutrition_plan_id']?>">
             <?=sel('status',$PSTATUS,$n['status'])?>
             <button type="submit" style="background:#2563eb;color:#fff;border:0;padding:4px 10px;border-radius:7px;font-size:12px;cursor:pointer">تحديث</button>
           </form>
-          <form method="post" style="margin:0" onsubmit="return confirm('حذف خطة التغذية؟')">
+          <form method="post" style="margin:0" onsubmit="return confirm('حذف خطة التغذية؟')"><?=csrf_field()?>
             <input type="hidden" name="action" value="delete_nplan">
             <input type="hidden" name="nutrition_plan_id" value="<?=$n['nutrition_plan_id']?>">
             <button type="submit" style="background:#dc2626;color:#fff;border:0;padding:4px 10px;border-radius:7px;font-size:12px;cursor:pointer">🗑 حذف</button>
@@ -426,7 +562,7 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
       </div>
     <?php endforeach; ?>
     <h3>➕ إضافة خطة تغذية</h3>
-    <form class="frm" method="post">
+    <form class="frm" method="post"><?=csrf_field()?>
       <input type="hidden" name="action" value="add_nutrition_plan">
       <input type="hidden" name="member_id" value="<?=$memberId?>">
       <input type="hidden" name="coach_id" value="<?=$coachId?>">
@@ -445,19 +581,19 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
       <?php foreach ($supps as $s): ?>
         <tr style="<?= $s['active'] ? '' : 'opacity:.5' ?>">
           <td><?=h($s['supplement_name'])?></td><td><?=h($s['dose'])?></td><td><?=h($s['timing'])?></td><td class="muted"><?=h($s['purpose'])?></td>
-          <td><form method="post" style="margin:0">
+          <td><form method="post" style="margin:0"><?=csrf_field()?>
             <input type="hidden" name="action" value="toggle_supplement">
             <input type="hidden" name="supplement_id" value="<?=$s['supplement_id']?>">
             <button type="submit" style="background:<?= $s['active'] ? '#f59e0b' : '#16a34a' ?>;color:#fff;border:0;padding:3px 10px;border-radius:6px;font-size:11px;cursor:pointer"><?= $s['active'] ? '⏸ إيقاف' : '▶ تفعيل' ?></button>
           </form></td>
-          <td><form method="post" style="margin:0" onsubmit="return confirm('حذف المكمّل؟')">
+          <td><form method="post" style="margin:0" onsubmit="return confirm('حذف المكمّل؟')"><?=csrf_field()?>
             <input type="hidden" name="action" value="delete_supplement">
             <input type="hidden" name="supplement_id" value="<?=$s['supplement_id']?>">
             <button type="submit" style="background:none;border:0;color:#dc2626;cursor:pointer;font-size:13px">🗑</button>
           </form></td></tr>
       <?php endforeach; ?></table>
     <?php endif; ?>
-    <form class="frm" method="post">
+    <form class="frm" method="post"><?=csrf_field()?>
       <input type="hidden" name="action" value="add_supplement">
       <input type="hidden" name="member_id" value="<?=$memberId?>">
       <div><label>اسم المكمّل</label><input name="supplement_name" required></div>
@@ -482,7 +618,7 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
       <?php endforeach; ?></table>
     <?php endif; ?>
     <h3>➕ تسجيل تقييم جديد</h3>
-    <form class="frm" method="post">
+    <form class="frm" method="post"><?=csrf_field()?>
       <input type="hidden" name="action" value="add_assessment">
       <input type="hidden" name="member_id" value="<?=$memberId?>">
       <input type="hidden" name="coach_id" value="<?=$coachId?>">
@@ -512,7 +648,7 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
       <?php endforeach; ?></table>
     <?php endif; ?>
     <h3>➕ تسجيل متابعة</h3>
-    <form class="frm" method="post">
+    <form class="frm" method="post"><?=csrf_field()?>
       <input type="hidden" name="action" value="add_followup">
       <input type="hidden" name="member_id" value="<?=$memberId?>">
       <input type="hidden" name="coach_id" value="<?=$coachId?>">
@@ -541,7 +677,7 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
           <tr><td><?=h($t['task_type'])?></td>
             <td><span class="badge" style="background:<?=$prB2[$t['priority']] ?? '#6b7280'?>"><?=h($t['priority'])?></span></td>
             <td class="muted"><?=h($t['due_at'])?></td>
-            <td><form method="post" style="margin:0"><input type="hidden" name="action" value="complete_task">
+            <td><form method="post" style="margin:0"><?=csrf_field()?><input type="hidden" name="action" value="complete_task">
               <input type="hidden" name="task_id" value="<?=(int)$t['task_id']?>">
               <button type="submit" style="background:#16a34a;color:#fff;border:0;padding:5px 12px;border-radius:7px;font-size:12px;cursor:pointer">✓ إنهاء</button></form></td></tr>
         <?php endforeach; ?></table>
@@ -562,6 +698,40 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
   </div>
 </section>
 
+<!-- ===== سجل الإصابات ===== -->
+<section>
+  <h2>🩹 سجل الإصابات (يشغّل أتمتة الإيقاف)</h2>
+  <?php if (!$injuries): ?><div class="empty">لا توجد إصابات مسجّلة.</div><?php else: ?>
+    <table><tr><th>التاريخ</th><th>المنطقة</th><th>النوع</th><th>الشدة</th><th>الحالة + التصريح الطبي</th><th>ملاحظات</th></tr>
+    <?php foreach ($injuries as $inj): ?>
+      <tr><td><?=h($inj['injury_date'])?></td><td><?=h($inj['body_area'])?></td><td class="muted"><?=h($inj['injury_type'])?></td>
+        <td><span class="badge" style="background:<?= in_array($inj['severity'],['high','critical'])?'#dc2626':($inj['severity']==='medium'?'#f59e0b':'#6b7280') ?>"><?=h($inj['severity'])?></span></td>
+        <td><form method="post" style="margin:0;display:flex;gap:5px;align-items:center;flex-wrap:wrap"><?=csrf_field()?>
+          <input type="hidden" name="action" value="set_injury_status">
+          <input type="hidden" name="injury_id" value="<?=$inj['injury_id']?>">
+          <?=sel('current_status',$ISTAT,$inj['current_status'])?>
+          <label style="font-size:11px;display:flex;align-items:center;gap:3px"><input type="checkbox" name="doctor_clearance" <?= $inj['doctor_clearance']?'checked':'' ?>>تصريح طبي</label>
+          <button type="submit" style="background:#2563eb;color:#fff;border:0;padding:3px 10px;border-radius:6px;font-size:11px;cursor:pointer">تحديث</button>
+        </form></td>
+        <td class="muted"><?=h($inj['notes'])?></td></tr>
+    <?php endforeach; ?></table>
+  <?php endif; ?>
+  <h3>➕ تسجيل إصابة</h3>
+  <form class="frm" method="post"><?=csrf_field()?>
+    <input type="hidden" name="action" value="add_injury">
+    <input type="hidden" name="member_id" value="<?=$memberId?>">
+    <div><label>التاريخ</label><input type="date" name="injury_date" value="<?=date('Y-m-d')?>" required></div>
+    <div><label>المنطقة *</label><input name="body_area" required placeholder="knee / lower back"></div>
+    <div><label>النوع</label><input name="injury_type"></div>
+    <div><label>الشدة</label><?=sel('severity',$ISEVER,'low')?></div>
+    <div><label>الحالة</label><?=sel('current_status',$ISTAT,'active')?></div>
+    <div><label style="display:flex;align-items:center;gap:5px;margin-top:18px"><input type="checkbox" name="doctor_clearance">تصريح طبي</label></div>
+    <div style="grid-column:1/-1"><label>ملاحظات</label><input name="notes"></div>
+    <div><button type="submit">حفظ الإصابة</button></div>
+  </form>
+  <p class="muted" style="font-size:12px;margin:10px 0 0">شدة high/critical: توقَف برامج العضو النشطة ويتحوّل لـ paused مع إنذار injury ومهمة إحالة طبية عاجلة — تلقائيًا.</p>
+</section>
+
 <!-- ===== متابعة التقدّم ===== -->
 <section>
   <h2>📈 متابعة التقدّم</h2>
@@ -578,11 +748,12 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
   <?php if ($prog): ?>
   <h3>السجلّ</h3>
   <table>
-    <tr><th>التاريخ</th><th>الوزن</th><th>دهون %</th><th>كتلة عضلية</th><th>خصر</th><th>صدر</th><th>أرداف</th><th>ملاحظة</th><th></th></tr>
+    <tr><th>التاريخ</th><th>الوزن</th><th>دهون %</th><th>كتلة عضلية</th><th>خصر</th><th>صدر</th><th>أرداف</th><th>ملاحظة</th><th>📷</th><th></th></tr>
     <?php foreach (array_reverse($prog) as $r): ?>
       <tr><td><?=h($r['record_date'])?></td><td><?=h($r['weight'])?></td><td><?=h($r['body_fat'])?></td><td><?=h($r['muscle_mass'])?></td>
         <td><?=h($r['waist'])?></td><td><?=h($r['chest'])?></td><td><?=h($r['hips'])?></td><td class="muted"><?=h($r['performance_note'])?></td>
-        <td><form method="post" style="margin:0" onsubmit="return confirm('حذف هذا القياس؟')">
+        <td><?php if ($r['photo_ref']): ?><a class="link" href="<?=h($r['photo_ref'])?>" target="_blank">📷 عرض</a><?php else: ?><span class="muted">—</span><?php endif; ?></td>
+        <td><form method="post" style="margin:0" onsubmit="return confirm('حذف هذا القياس؟')"><?=csrf_field()?>
           <input type="hidden" name="action" value="delete_progress">
           <input type="hidden" name="progress_id" value="<?=$r['progress_id']?>">
           <button type="submit" style="background:none;border:0;color:#dc2626;cursor:pointer;font-size:13px">🗑</button>
@@ -592,7 +763,7 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
   <?php endif; ?>
 
   <h3>➕ تسجيل قياس جديد</h3>
-  <form class="frm" method="post">
+  <form class="frm" method="post" enctype="multipart/form-data"><?=csrf_field()?>
     <input type="hidden" name="action" value="add_progress">
     <input type="hidden" name="member_id" value="<?=$memberId?>">
     <div><label>التاريخ</label><input type="date" name="record_date" required></div>
@@ -603,6 +774,7 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
     <div><label>الصدر (cm)</label><input type="number" step="0.1" name="chest"></div>
     <div><label>الأرداف (cm)</label><input type="number" step="0.1" name="hips"></div>
     <div><label>ملاحظة</label><input name="performance_note"></div>
+    <div><label>📷 صورة (اختياري، حتى 5MB)</label><input type="file" name="photo" accept="image/jpeg,image/png,image/webp"></div>
     <div><button type="submit">حفظ القياس</button></div>
   </form>
 </section>
@@ -620,7 +792,7 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
     <?php endforeach; ?></table>
   <?php endif; ?>
   <h3>➕ تسجيل حضور / غياب</h3>
-  <form class="frm" method="post">
+  <form class="frm" method="post"><?=csrf_field()?>
     <input type="hidden" name="action" value="add_attendance">
     <input type="hidden" name="member_id" value="<?=$memberId?>">
     <input type="hidden" name="coach_id" value="<?=$coachId?>">
@@ -648,7 +820,7 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
       <?php endforeach; ?></table>
     <?php endif; ?>
     <h3>➕ تسجيل رسالة</h3>
-    <form class="frm" method="post">
+    <form class="frm" method="post"><?=csrf_field()?>
       <input type="hidden" name="action" value="add_message">
       <input type="hidden" name="member_id" value="<?=$memberId?>">
       <input type="hidden" name="coach_id" value="<?=$coachId?>">
@@ -671,7 +843,7 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
       <?php endforeach; ?></table>
     <?php endif; ?>
     <h3>➕ تسجيل إنجاز</h3>
-    <form class="frm" method="post">
+    <form class="frm" method="post"><?=csrf_field()?>
       <input type="hidden" name="action" value="add_milestone">
       <input type="hidden" name="member_id" value="<?=$memberId?>">
       <div><label>التاريخ</label><input type="date" name="milestone_date" value="<?=date('Y-m-d')?>" required></div>
