@@ -113,6 +113,7 @@ function page_head(string $title, string $active = ''): void {
   <nav>
     <?php if (is_manager()): ?><a href="index.php" class="<?= $active==='dash' ? 'active' : '' ?>">لوحة الإدارة</a><?php endif; ?>
     <a href="captains.php" class="<?= $active==='captains' ? 'active' : '' ?>">واجهة الكباتن</a>
+    <a href="templates.php" class="<?= $active==='templates' ? 'active' : '' ?>">التمارين والقوالب</a>
   </nav>
   <span class="sub">
     👤 <?=h($u['name'])?> (<?=h($u['role'])?>)

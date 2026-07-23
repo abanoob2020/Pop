@@ -79,6 +79,10 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $targetMember = (int)$pdo->query("SELECT member_id FROM progress_tracking WHERE progress_id = " . (int)$_POST['progress_id'])->fetchColumn();
         } elseif ($act === 'set_injury_status') {
             $targetMember = (int)$pdo->query("SELECT member_id FROM injury_history WHERE injury_id = " . (int)$_POST['injury_id'])->fetchColumn();
+        } elseif ($act === 'add_session_exercise') {
+            $targetMember = (int)$pdo->query("SELECT wp.member_id FROM workout_sessions ws JOIN workout_plans wp ON wp.workout_plan_id = ws.workout_plan_id WHERE ws.session_id = " . (int)$_POST['session_id'])->fetchColumn();
+        } elseif ($act === 'delete_session_exercise') {
+            $targetMember = (int)$pdo->query("SELECT wp.member_id FROM session_exercises se JOIN workout_sessions ws ON ws.session_id = se.session_id JOIN workout_plans wp ON wp.workout_plan_id = ws.workout_plan_id WHERE se.session_exercise_id = " . (int)$_POST['session_exercise_id'])->fetchColumn();
         }
         if (!member_allowed($pdo, $me, $targetMember)) throw new RuntimeException('غير مسموح بتعديل هذا العضو.');
 
@@ -195,6 +199,73 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($act === 'set_injury_status') {
             $pdo->prepare("UPDATE injury_history SET current_status = ?, doctor_clearance = ? WHERE injury_id = ?")
                 ->execute([$_POST['current_status'], isset($_POST['doctor_clearance']) ? 1 : 0, (int)$_POST['injury_id']]);
+        } elseif ($act === 'add_session_exercise') {
+            $exId = (int)$_POST['exercise_id'];
+            $load = $_POST['load_kg'] !== '' ? (float)$_POST['load_kg'] : null;
+            // أقصى حمل سابق لهذا العضو/التمرين — لاكتشاف الرقم القياسي (PR)
+            $prev = null;
+            if ($load !== null) {
+                $pm = $pdo->prepare("SELECT MAX(se.load_kg) FROM session_exercises se
+                                     JOIN workout_sessions ws ON ws.session_id = se.session_id
+                                     JOIN workout_plans wp ON wp.workout_plan_id = ws.workout_plan_id
+                                     WHERE wp.member_id = ? AND se.exercise_id = ?");
+                $pm->execute([$targetMember, $exId]);
+                $prev = $pm->fetchColumn();
+                $prev = ($prev !== null && $prev !== false) ? (float)$prev : null;
+            }
+            $pdo->prepare("INSERT INTO session_exercises (session_id, exercise_id, sort_order, sets, reps, load_kg, rest_sec, rpe, notes)
+                           VALUES (?,?,?,?,?,?,?,?,?)")->execute([
+                (int)$_POST['session_id'], $exId, max(1, (int)($_POST['sort_order'] ?: 1)),
+                $_POST['sets'] !== '' ? (int)$_POST['sets'] : null,
+                trim($_POST['reps'] ?? '') ?: null, $load,
+                $_POST['rest_sec'] !== '' ? (int)$_POST['rest_sec'] : null,
+                $_POST['rpe'] !== '' ? (int)$_POST['rpe'] : null,
+                trim($_POST['notes'] ?? '') ?: null,
+            ]);
+            if ($load !== null && $prev !== null && $load > $prev) {
+                // 🏆 رقم قياسي جديد → إنجاز تلقائي
+                $exName = $pdo->query("SELECT name FROM exercises WHERE exercise_id = $exId")->fetchColumn();
+                $pdo->prepare("INSERT INTO milestones (member_id, milestone_date, milestone_type, description, reward_status)
+                               VALUES (?, CURDATE(), 'strength_gain', ?, 'badge')")
+                    ->execute([$targetMember, "🏆 رقم قياسي جديد في {$exName}: {$load} كجم (السابق: {$prev})"]);
+            }
+        } elseif ($act === 'delete_session_exercise') {
+            $pdo->prepare("DELETE FROM session_exercises WHERE session_exercise_id = ?")->execute([(int)$_POST['session_exercise_id']]);
+        } elseif ($act === 'assign_template') {
+            $tpl = $pdo->prepare("SELECT * FROM program_templates WHERE template_id = ? AND active = 1");
+            $tpl->execute([(int)$_POST['template_id']]);
+            $tpl = $tpl->fetch();
+            if (!$tpl) throw new RuntimeException('القالب غير موجود أو موقوف.');
+            $start = $_POST['start_date'];
+            $end = date('Y-m-d', strtotime($start) + ($tpl['duration_weeks'] * 7 - 1) * 86400);
+            $pdo->beginTransaction();
+            $pdo->prepare("INSERT INTO workout_plans (member_id, coach_id, goal_type, phase, start_date, end_date, status, notes)
+                           VALUES (?,?,?,?,?,?,'active',?)")->execute([
+                $targetMember, $coachId ?: null, $tpl['goal_type'], $tpl['phase'], $start, $end,
+                'من قالب: ' . $tpl['title'],
+            ]);
+            $planId = (int)$pdo->lastInsertId();
+            $tss = $pdo->prepare("SELECT * FROM template_sessions WHERE template_id = ? ORDER BY day_offset");
+            $tss->execute([$tpl['template_id']]);
+            $tss = $tss->fetchAll();
+            $insS = $pdo->prepare("INSERT INTO workout_sessions (workout_plan_id, session_date, muscle_group, completion_status, notes)
+                                   VALUES (?,?,?,'planned',?)");
+            $insX = $pdo->prepare("INSERT INTO session_exercises (session_id, exercise_id, sort_order, sets, reps, rest_sec, notes)
+                                   VALUES (?,?,?,?,?,?,?)");
+            foreach ($tss as $ts) {
+                $tse = $pdo->prepare("SELECT * FROM template_session_exercises WHERE template_session_id = ? ORDER BY sort_order");
+                $tse->execute([$ts['template_session_id']]);
+                $tse = $tse->fetchAll();
+                for ($w = 0; $w < (int)$tpl['duration_weeks']; $w++) {
+                    $date = date('Y-m-d', strtotime($start) + ($w * 7 + (int)$ts['day_offset']) * 86400);
+                    $insS->execute([$planId, $date, $ts['muscle_group'], $ts['title']]);
+                    $sid = (int)$pdo->lastInsertId();
+                    foreach ($tse as $x) {
+                        $insX->execute([$sid, $x['exercise_id'], $x['sort_order'], $x['sets'], $x['reps'], $x['rest_sec'], $x['load_note']]);
+                    }
+                }
+            }
+            $pdo->commit();
         } elseif ($act === 'set_session_status') {
             $pdo->prepare("UPDATE workout_sessions SET completion_status = ? WHERE session_id = ?")
                 ->execute([$_POST['completion_status'], (int)$_POST['session_id']]);
@@ -248,6 +319,7 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
         header("Location: captains.php?coach={$coachId}&member={$memberId}&ok=1");
         exit;
     } catch (Throwable $e) {
+        if ($pdo && $pdo->inTransaction()) $pdo->rollBack();
         $error = str_contains($e->getMessage(), 'Duplicate entry')
             ? 'قيمة مكررة: الهاتف أو البريد مستخدم لعضو آخر بالفعل.'
             : 'تعذّر الحفظ: ' . $e->getMessage();
@@ -427,6 +499,49 @@ $miles = $pdo->prepare("SELECT * FROM milestones WHERE member_id = ? ORDER BY mi
 $miles->execute([$memberId]); $miles = $miles->fetchAll();
 $injuries = $pdo->prepare("SELECT * FROM injury_history WHERE member_id = ? ORDER BY injury_date DESC");
 $injuries->execute([$memberId]); $injuries = $injuries->fetchAll();
+// التمارين المُهيكلة لكل جلسات العضو
+$sessEx = [];
+$sx = $pdo->prepare("SELECT se.*, e.name AS ex_name FROM session_exercises se
+                     JOIN exercises e ON e.exercise_id = se.exercise_id
+                     JOIN workout_sessions ws ON ws.session_id = se.session_id
+                     JOIN workout_plans wp ON wp.workout_plan_id = ws.workout_plan_id
+                     WHERE wp.member_id = ? ORDER BY se.sort_order");
+$sx->execute([$memberId]);
+foreach ($sx as $r) $sessEx[$r['session_id']][] = $r;
+$exList = $pdo->query("SELECT exercise_id, name FROM exercises WHERE active = 1 ORDER BY name")->fetchAll();
+// تقدّم الأحمال: أقصى حمل لكل تمرين في كل تاريخ جلسة
+$loadSeries = [];
+$lp = $pdo->prepare("SELECT e.name, ws.session_date, MAX(se.load_kg) AS mx
+                     FROM session_exercises se
+                     JOIN exercises e ON e.exercise_id = se.exercise_id
+                     JOIN workout_sessions ws ON ws.session_id = se.session_id
+                     JOIN workout_plans wp ON wp.workout_plan_id = ws.workout_plan_id
+                     WHERE wp.member_id = ? AND se.load_kg IS NOT NULL
+                     GROUP BY e.exercise_id, e.name, ws.session_date ORDER BY ws.session_date");
+$lp->execute([$memberId]);
+foreach ($lp as $r) $loadSeries[$r['name']][] = [$r['session_date'], $r['mx']];
+$loadSeries = array_filter($loadSeries, fn($pts) => count($pts) >= 2);
+$loadSeries = array_slice($loadSeries, 0, 4, true);
+// الحجم التدريبي التقريبي (طن) لكل مجموعة عضلية: آخر 7 أيام مقابل الأسبوع السابق
+$tonnage = $pdo->prepare("SELECT e.muscle_group,
+        ROUND(SUM(CASE WHEN ws.session_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+              THEN COALESCE(se.sets,0)*CAST(se.reps AS UNSIGNED)*COALESCE(se.load_kg,0) ELSE 0 END)/1000, 2) AS t_now,
+        ROUND(SUM(CASE WHEN ws.session_date < DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+              THEN COALESCE(se.sets,0)*CAST(se.reps AS UNSIGNED)*COALESCE(se.load_kg,0) ELSE 0 END)/1000, 2) AS t_prev
+    FROM session_exercises se
+    JOIN exercises e ON e.exercise_id = se.exercise_id
+    JOIN workout_sessions ws ON ws.session_id = se.session_id
+    JOIN workout_plans wp ON wp.workout_plan_id = ws.workout_plan_id
+    WHERE wp.member_id = ? AND ws.session_date >= DATE_SUB(CURDATE(), INTERVAL 14 DAY)
+    GROUP BY e.muscle_group HAVING t_now > 0 OR t_prev > 0 ORDER BY t_now DESC");
+$tonnage->execute([$memberId]);
+$tonnage = $tonnage->fetchAll();
+// قوالب نشطة + اقتراح حسب آخر تقييم
+$tplsActive = $pdo->query("SELECT template_id, title, goal_type, phase, duration_weeks FROM program_templates WHERE active = 1 ORDER BY template_id")->fetchAll();
+$lastRisk = $pdo->prepare("SELECT risk_score FROM assessments WHERE member_id = ? ORDER BY assessment_date DESC LIMIT 1");
+$lastRisk->execute([$memberId]);
+$lastRisk = $lastRisk->fetchColumn();
+$suggestPhase = $lastRisk === false ? null : ($lastRisk >= 80 ? 'corrective' : ($lastRisk >= 60 ? 'stabilization' : null));
 
 $crumb = '<a class="link" href="captains.php?coach=' . $coachId . '">' . h($coach['full_name']) . '</a> / <strong>' . h($member['full_name']) . '</strong>';
 echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.php">الكباتن</a> / ') . $crumb . '</div>';
@@ -501,6 +616,34 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
                   <input type="hidden" name="session_id" value="<?=$s['session_id']?>">
                   <button type="submit" style="background:none;border:0;color:#dc2626;cursor:pointer;font-size:13px">🗑</button>
                 </form></td></tr>
+              <tr><td colspan="5" style="background:#fbfcfe;padding:4px 10px">
+                <?php foreach ($sessEx[$s['session_id']] ?? [] as $x): ?>
+                  <span style="display:inline-flex;align-items:center;gap:4px;background:#eef2ff;border-radius:999px;padding:2px 10px;font-size:12px;margin:2px">
+                    <?=h($x['sort_order'])?>. <strong><?=h($x['ex_name'])?></strong>
+                    <?=h($x['sets'])?>×<?=h($x['reps'])?><?= $x['load_kg'] !== null ? ' @' . h($x['load_kg']) . 'كجم' : ($x['notes'] ? ' (' . h($x['notes']) . ')' : '') ?><?= $x['rpe'] ? ' RPE' . h($x['rpe']) : '' ?>
+                    <form method="post" style="margin:0;display:inline"><?=csrf_field()?>
+                      <input type="hidden" name="action" value="delete_session_exercise">
+                      <input type="hidden" name="session_exercise_id" value="<?=$x['session_exercise_id']?>">
+                      <button type="submit" style="background:none;border:0;color:#dc2626;cursor:pointer;font-size:11px">✕</button>
+                    </form>
+                  </span>
+                <?php endforeach; ?>
+                <details style="display:inline-block;vertical-align:middle"><summary class="link" style="cursor:pointer;font-size:12px">➕ تمرين مُهيكل</summary>
+                  <form class="frm" method="post"><?=csrf_field()?>
+                    <input type="hidden" name="action" value="add_session_exercise">
+                    <input type="hidden" name="session_id" value="<?=$s['session_id']?>">
+                    <div><label>التمرين</label><select name="exercise_id"><?php foreach ($exList as $e2): ?><option value="<?=$e2['exercise_id']?>"><?=h($e2['name'])?></option><?php endforeach; ?></select></div>
+                    <div><label>ترتيب</label><input type="number" name="sort_order" value="1" min="1"></div>
+                    <div><label>مجموعات</label><input type="number" name="sets" min="1"></div>
+                    <div><label>تكرارات</label><input name="reps" placeholder="8-12"></div>
+                    <div><label>الحمل (كجم)</label><input type="number" step="0.5" name="load_kg"></div>
+                    <div><label>راحة (ث)</label><input type="number" name="rest_sec"></div>
+                    <div><label>RPE</label><input type="number" name="rpe" min="1" max="10"></div>
+                    <div><label>ملاحظة</label><input name="notes"></div>
+                    <div><button type="submit">حفظ</button></div>
+                  </form>
+                </details>
+              </td></tr>
             <?php endforeach; ?>
           </table>
         <?php endif; ?>
@@ -521,6 +664,21 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
         </details>
       </div>
     <?php endforeach; ?>
+    <h3>📋 إسناد قالب جاهز (يولّد الجلسات والتمارين تلقائيًا)</h3>
+    <?php if (!$tplsActive): ?><div class="empty">لا توجد قوالب نشطة — أنشئ واحدًا من صفحة "التمارين والقوالب".</div><?php else: ?>
+    <form class="frm" method="post"><?=csrf_field()?>
+      <input type="hidden" name="action" value="assign_template">
+      <input type="hidden" name="member_id" value="<?=$memberId?>">
+      <div style="grid-column:span 2"><label>القالب</label><select name="template_id">
+        <?php foreach ($tplsActive as $tp): $sug = $suggestPhase !== null && $tp['phase'] === $suggestPhase; ?>
+          <option value="<?=$tp['template_id']?>" <?= $sug ? 'selected' : '' ?>><?=h($tp['title'])?> — <?=h($tp['phase'])?> (<?=h($tp['duration_weeks'])?> أسابيع)<?= $sug ? ' ⭐ مقترح' : '' ?></option>
+        <?php endforeach; ?></select></div>
+      <div><label>تاريخ البداية</label><input type="date" name="start_date" value="<?=date('Y-m-d')?>" required></div>
+      <div><button type="submit">إسناد وتوليد</button></div>
+    </form>
+    <?php if ($suggestPhase !== null): ?><p class="muted" style="font-size:12px;margin:6px 0 0">بناءً على آخر تقييم (خطر <?=h($lastRisk)?>) المرحلة المقترحة: <strong><?=h($suggestPhase)?></strong> ⭐</p><?php endif; ?>
+    <?php endif; ?>
+
     <h3>➕ إضافة برنامج تمرين جديد</h3>
     <form class="frm" method="post"><?=csrf_field()?>
       <input type="hidden" name="action" value="add_workout_plan">
@@ -744,6 +902,23 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
     <div><strong style="font-size:13px;color:#334155">الوزن والكتلة العضلية</strong><?=line_chart([$wSeries,$mSeries])?></div>
     <div><strong style="font-size:13px;color:#334155">نسبة الدهون</strong><?=line_chart([$fSeries])?></div>
   </div>
+
+  <?php if ($loadSeries):
+    $palette = ['#2563eb','#16a34a','#f59e0b','#db2777']; $pi = 0; $ser = [];
+    foreach ($loadSeries as $nm => $pts) $ser[] = ['label' => $nm, 'color' => $palette[$pi++ % 4], 'points' => $pts];
+  ?>
+  <h3>🏋️ تقدّم الأحمال (أقصى حمل بالكيلو لكل جلسة)</h3>
+  <?=line_chart($ser)?>
+  <?php endif; ?>
+
+  <?php if ($tonnage): ?>
+  <h3>📦 الحجم التدريبي التقريبي (طن) — آخر 7 أيام مقابل الأسبوع السابق</h3>
+  <table><tr><th>المجموعة العضلية</th><th>هذا الأسبوع</th><th>الأسبوع السابق</th><th>التغير</th></tr>
+  <?php foreach ($tonnage as $tn): $d = $tn['t_now'] - $tn['t_prev']; ?>
+    <tr><td><?=h($tn['muscle_group'])?></td><td><strong><?=h($tn['t_now'])?></strong></td><td class="muted"><?=h($tn['t_prev'])?></td>
+      <td style="color:<?= $d >= 0 ? '#16a34a' : '#dc2626' ?>;font-weight:600"><?= $d >= 0 ? '▲' : '▼' ?> <?=h(round(abs($d), 2))?></td></tr>
+  <?php endforeach; ?></table>
+  <?php endif; ?>
 
   <?php if ($prog): ?>
   <h3>السجلّ</h3>
