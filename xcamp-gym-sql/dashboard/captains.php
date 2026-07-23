@@ -360,7 +360,11 @@ if (!$memberId) {
     $q = trim($_GET['q'] ?? '');
     $sql = "SELECT m.member_id, m.full_name, m.status, m.goal_summary,
                    (SELECT MAX(a.attendance_date) FROM daily_attendance a WHERE a.member_id = m.member_id AND a.attended = 1) AS last_att,
-                   (SELECT a2.risk_score FROM assessments a2 WHERE a2.member_id = m.member_id ORDER BY a2.assessment_date DESC LIMIT 1) AS risk
+                   (SELECT a2.risk_score FROM assessments a2 WHERE a2.member_id = m.member_id ORDER BY a2.assessment_date DESC LIMIT 1) AS risk,
+                   (SELECT SUM(ws.completion_status = 'completed') FROM workout_sessions ws JOIN workout_plans wp ON wp.workout_plan_id = ws.workout_plan_id
+                     WHERE wp.member_id = m.member_id AND ws.session_date BETWEEN DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND CURDATE()) AS comp_done,
+                   (SELECT COUNT(*) FROM workout_sessions ws JOIN workout_plans wp ON wp.workout_plan_id = ws.workout_plan_id
+                     WHERE wp.member_id = m.member_id AND ws.session_date BETWEEN DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND CURDATE()) AS comp_total
             FROM members m WHERE m.coach_id = ?";
     $args = [$coachId];
     if ($q !== '') { $sql .= " AND (m.full_name LIKE ? OR m.phone LIKE ?)"; $args[] = "%$q%"; $args[] = "%$q%"; }
@@ -377,11 +381,19 @@ if (!$memberId) {
        . '</form>';
     if (!$members) echo '<div class="empty">' . ($q !== '' ? 'لا نتائج مطابقة للبحث.' : 'لا يوجد أعضاء مسنَدون.') . '</div>';
     else {
-        echo '<table><tr><th>#</th><th>الاسم</th><th>الحالة</th><th>درجة الخطر</th><th>آخر حضور</th><th>الهدف</th><th></th></tr>';
+        echo '<table><tr><th>#</th><th>الاسم</th><th>الحالة</th><th>درجة الخطر</th><th>الالتزام (30ي)</th><th>آخر حضور</th><th>الهدف</th><th></th></tr>';
         foreach ($members as $m) {
             $riskColor = $m['risk'] === null ? '#94a3b8' : ($m['risk'] >= 80 ? '#dc2626' : ($m['risk'] >= 60 ? '#f59e0b' : '#16a34a'));
+            if ((int)$m['comp_total'] > 0) {
+                $pct = round(100 * (int)$m['comp_done'] / (int)$m['comp_total']);
+                $cColor = $pct >= 75 ? '#16a34a' : ($pct >= 50 ? '#f59e0b' : '#dc2626');
+                $compCell = '<strong style="color:' . $cColor . '">' . $pct . '%</strong> <span class="muted" style="font-size:11px">(' . (int)$m['comp_done'] . '/' . (int)$m['comp_total'] . ')</span>';
+            } else {
+                $compCell = '<span class="muted">—</span>';
+            }
             echo '<tr><td>' . h($m['member_id']) . '</td><td>' . h($m['full_name']) . '</td><td><span class="badge">' . h($m['status']) . '</span></td>' .
                  '<td><strong style="color:' . $riskColor . '">' . h($m['risk'] ?? '—') . '</strong></td>' .
+                 '<td>' . $compCell . '</td>' .
                  '<td class="muted">' . h($m['last_att'] ?? '—') . '</td><td class="muted">' . h($m['goal_summary']) .
                  '</td><td><a class="link" href="captains.php?coach=' . $coachId . '&member=' . (int)$m['member_id'] . '">فتح الملف ←</a></td></tr>';
         }
@@ -434,6 +446,14 @@ if (!$memberId) {
                               GROUP BY m.member_id, m.full_name ORDER BY review_date");
     $reviews->execute([$coachId]);
     $reviews = $reviews->fetchAll();
+    $comp = $pdo->prepare("SELECT SUM(ws.completion_status = 'completed') AS d, COUNT(*) AS t
+                           FROM workout_sessions ws
+                           JOIN workout_plans wp ON wp.workout_plan_id = ws.workout_plan_id
+                           JOIN members m ON m.member_id = wp.member_id
+                           WHERE m.coach_id = ? AND ws.session_date BETWEEN DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND CURDATE()");
+    $comp->execute([$coachId]);
+    $comp = $comp->fetch();
+    $compPct = ((int)($comp['t'] ?? 0)) > 0 ? round(100 * (int)$comp['d'] / (int)$comp['t']) . '%' : '—';
     $repCards = [
         ['أعضاء مسنَدون', $rep['total'] ?? 0, '#2563eb'],
         ['نشطون', $rep['active_cnt'] ?? 0, '#16a34a'],
@@ -442,6 +462,7 @@ if (!$memberId) {
         ['إنذارات مفتوحة', $rep['open_flags'] ?? 0, '#db2777'],
         ['زيارات آخر 7 أيام', $rep['visits_7d'] ?? 0, '#0891b2'],
         ['جلسات مكتملة (7 أيام)', $rep['done_sessions_7d'] ?? 0, '#16a34a'],
+        ['الالتزام (30 يوم)', $compPct, '#0891b2'],
     ];
     echo '<section><h2>📊 تقرير الكابتن</h2><div class="kpis" style="margin-bottom:8px">';
     foreach ($repCards as [$l, $n, $clr]) {
@@ -542,6 +563,12 @@ $lastRisk = $pdo->prepare("SELECT risk_score FROM assessments WHERE member_id = 
 $lastRisk->execute([$memberId]);
 $lastRisk = $lastRisk->fetchColumn();
 $suggestPhase = $lastRisk === false ? null : ($lastRisk >= 80 ? 'corrective' : ($lastRisk >= 60 ? 'stabilization' : null));
+// التزام العضو خلال 30 يومًا (جلسات مكتملة ÷ إجمالي الجلسات المستحقة)
+$mComp = $pdo->prepare("SELECT SUM(ws.completion_status = 'completed') AS d, COUNT(*) AS t
+                        FROM workout_sessions ws JOIN workout_plans wp ON wp.workout_plan_id = ws.workout_plan_id
+                        WHERE wp.member_id = ? AND ws.session_date BETWEEN DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND CURDATE()");
+$mComp->execute([$memberId]);
+$mComp = $mComp->fetch();
 
 $crumb = '<a class="link" href="captains.php?coach=' . $coachId . '">' . h($coach['full_name']) . '</a> / <strong>' . h($member['full_name']) . '</strong>';
 echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.php">الكباتن</a> / ') . $crumb . '</div>';
@@ -581,7 +608,13 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
 <div class="grid2">
   <!-- ===== برامج التمرين ===== -->
   <section>
-    <h2>🏋️ برامج التمرين</h2>
+    <h2>🏋️ برامج التمرين
+      <?php if ((int)($mComp['t'] ?? 0) > 0):
+        $mp = round(100 * (int)$mComp['d'] / (int)$mComp['t']);
+        $mpc = $mp >= 75 ? '#16a34a' : ($mp >= 50 ? '#f59e0b' : '#dc2626'); ?>
+        <span class="badge" style="background:<?=$mpc?>;margin-inline-start:6px">الالتزام <?=$mp?>% (<?=(int)$mComp['d']?>/<?=(int)$mComp['t']?>)</span>
+      <?php endif; ?>
+    </h2>
     <?php if (!$wplans): ?><div class="empty">لا توجد برامج بعد.</div><?php endif; ?>
     <?php foreach ($wplans as $p): ?>
       <div style="border:1px solid #eef2f7;border-radius:10px;padding:12px;margin-bottom:12px">
@@ -604,7 +637,7 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
         <?php $ss = $sessByPlan[$p['workout_plan_id']] ?? []; if ($ss): ?>
           <table style="margin-top:6px"><tr><th>التاريخ</th><th>المجموعة</th><th>تمارين</th><th>الحالة</th><th></th></tr>
             <?php foreach ($ss as $s): ?>
-              <tr><td><?=h($s['session_date'])?></td><td><?=h($s['muscle_group'])?></td><td class="muted"><?=h($s['exercises'])?></td>
+              <tr><td><a class="link" href="session.php?id=<?=$s['session_id']?>" title="فتح وضع بدء الجلسة">▶ <?=h($s['session_date'])?></a></td><td><?=h($s['muscle_group'])?></td><td class="muted"><?=h($s['exercises'])?></td>
                 <td><form method="post" style="margin:0;display:flex;gap:4px"><?=csrf_field()?>
                   <input type="hidden" name="action" value="set_session_status">
                   <input type="hidden" name="session_id" value="<?=$s['session_id']?>">
