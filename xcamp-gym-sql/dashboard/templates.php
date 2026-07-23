@@ -51,7 +51,7 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $openTpl = (int)$pdo->query("SELECT ts.template_id FROM template_session_exercises t JOIN template_sessions ts ON ts.template_session_id = t.template_session_id WHERE t.tse_id = " . (int)$_POST['tse_id'])->fetchColumn();
             $pdo->prepare("DELETE FROM template_session_exercises WHERE tse_id = ?")->execute([(int)$_POST['tse_id']]);
         }
-        header("Location: templates.php" . ($openTpl ? "?tpl=$openTpl" : "") . "&ok=1");
+        header("Location: templates.php?" . ($openTpl ? "tpl=$openTpl&" : "") . "ok=1");
         exit;
     } catch (Throwable $e) {
         $error = str_contains($e->getMessage(), 'Duplicate entry')
