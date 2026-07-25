@@ -250,3 +250,90 @@ function nutrition_targets(float $weightKg, string $goal): array {
           : 'سعرات صيانة متوازنة');
     return ['calories' => $cal, 'protein_g' => $protein, 'fat_g' => $fat, 'carbs_g' => $carbs, 'hydration_l' => $hyd, 'note' => $note];
 }
+
+// =============================================================================
+// تحليل التغذية المتقدّم: توزيع الوجبات + refeed/diet-break + تتبّع الالتزام
+// =============================================================================
+
+/**
+ * توزيع الماكروز على الوجبات بأسلوب احترافي:
+ *   - البروتين موزّع بالتساوي (عتبة اللوسين لتحفيز بناء العضل كل ~3–4 ساعات).
+ *   - الكارب مركّز حول التمرين (وجبتا ما قبل/بعد التمرين تأخذان حصة أكبر).
+ *   - الدهون أقل في وجبة التمرين (هضم أسرع) وأعلى في الوجبات البعيدة.
+ * $trainMeal = فهرس وجبة التمرين (1-based، 0 = لا يوجد توقيت تمرين محدّد).
+ * يرجّع مصفوفة وجبات، كل وجبة ['label','is_train','protein','carbs','fat','calories'].
+ */
+function meal_distribution(int $protein, int $carbs, int $fat, int $meals, int $trainMeal = 0): array {
+    $meals = max(1, min(8, $meals));
+    // أوزان الكارب: وجبتا ما قبل/بعد التمرين ×2، الباقي ×1
+    $carbW = array_fill(1, $meals, 1.0);
+    $fatW  = array_fill(1, $meals, 1.0);
+    if ($trainMeal >= 1 && $trainMeal <= $meals) {
+        $carbW[$trainMeal] = 2.0;                          // وجبة ما بعد التمرين
+        if ($trainMeal - 1 >= 1) $carbW[$trainMeal - 1] = 1.6; // ما قبل التمرين
+        $fatW[$trainMeal] = 0.4;                           // دهون أقل حول التمرين
+    }
+    $carbTot = array_sum($carbW);
+    $fatTot  = array_sum($fatW);
+    $pEach   = (int) round($protein / $meals);
+    $out = [];
+    for ($i = 1; $i <= $meals; $i++) {
+        $c = (int) round($carbs * $carbW[$i] / $carbTot);
+        $f = (int) round($fat   * $fatW[$i]  / $fatTot);
+        $out[] = [
+            'label'    => 'الوجبة ' . $i . ($i === $trainMeal ? ' (بعد التمرين)' : ($i === $trainMeal - 1 ? ' (قبل التمرين)' : '')),
+            'is_train' => $i === $trainMeal,
+            'protein'  => $pEach,
+            'carbs'    => $c,
+            'fat'      => $f,
+            'calories' => $pEach * 4 + $c * 4 + $f * 9,
+        ];
+    }
+    return $out;
+}
+
+/**
+ * بروتوكول أيام الكارب العالي (Refeed) — مطلوب أساسًا أثناء التنشيف.
+ * يرفع الكارب إلى مستوى الصيانة يومًا–يومين أسبوعيًا لاستعادة الليبتين والجليكوجين.
+ * يرجّع ['applicable','frequency','carb_target','note'] أو applicable=false لغير التنشيف.
+ */
+function refeed_plan(string $goal, float $weightKg, int $baseProtein, int $baseFat): array {
+    if ($goal !== 'fat_loss' || $weightKg <= 0)
+        return ['applicable' => false, 'note' => 'أيام الكارب العالي غير ضرورية لهذا الهدف — تُستخدم أساسًا أثناء التنشيف.'];
+    // كارب الصيانة = السعرات عند الصيانة ناقص البروتين/الدهون ÷ 4
+    $maintCal    = $weightKg * 31;
+    $refeedCarbs = (int) max(0, round(($maintCal - ($baseProtein * 4 + $baseFat * 9)) / 4));
+    return [
+        'applicable'  => true,
+        'frequency'   => 'يوم–يومان أسبوعيًا (يفضَّل أيام التمرين الثقيل)',
+        'carb_target' => $refeedCarbs,
+        'note'        => 'ارفع الكارب إلى ~' . $refeedCarbs . ' جم مع خفض الدهون، لاستعادة الليبتين وامتلاء الجليكوجين وتحسين الأداء.',
+    ];
+}
+
+/** بروتوكول فترة راحة الدايت (Diet Break) — أثناء التنشيف الطويل فقط. */
+function diet_break_plan(string $goal): array {
+    if ($goal !== 'fat_loss')
+        return ['applicable' => false, 'note' => 'غير مطلوب لهذا الهدف.'];
+    return [
+        'applicable' => true,
+        'note'       => 'كل 6–8 أسابيع تنشيف متواصل: خذ 1–2 أسبوع على سعرات الصيانة لاستعادة الهرمونات (الغدة الدرقية/الليبتين)، تقليل الإجهاد، والحفاظ على العضل قبل استئناف العجز الحراري.',
+    ];
+}
+
+/**
+ * حساب نسبة الالتزام الغذائي من سجلّات يومية:
+ *   on_plan=1 · partial=0.5 · off_plan=0 → متوسط موزون %.
+ * يرجّع ['pct','label','color','count'].
+ */
+function nutrition_compliance(array $logs): array {
+    $w = ['on_plan' => 1.0, 'partial' => 0.5, 'off_plan' => 0.0];
+    $n = count($logs);
+    if ($n === 0) return ['pct' => null, 'label' => 'لا سجل بعد', 'color' => '#94a3b8', 'count' => 0];
+    $sum = 0.0;
+    foreach ($logs as $lg) $sum += $w[$lg['adherence']] ?? 0.0;
+    $pct = (int) round($sum / $n * 100);
+    if ($pct >= 85) return ['pct' => $pct, 'label' => 'التزام ممتاز', 'color' => '#16a34a', 'count' => $n];
+    if ($pct >= 60) return ['pct' => $pct, 'label' => 'التزام جيد', 'color' => '#f59e0b', 'count' => $n];
+    return ['pct' => $pct, 'label' => 'التزام ضعيف', 'color' => '#dc2626', 'count' => $n];
+}

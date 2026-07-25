@@ -83,6 +83,8 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $targetMember = (int)$pdo->query("SELECT wp.member_id FROM workout_sessions ws JOIN workout_plans wp ON wp.workout_plan_id = ws.workout_plan_id WHERE ws.session_id = " . (int)$_POST['session_id'])->fetchColumn();
         } elseif ($act === 'delete_session_exercise') {
             $targetMember = (int)$pdo->query("SELECT wp.member_id FROM session_exercises se JOIN workout_sessions ws ON ws.session_id = se.session_id JOIN workout_plans wp ON wp.workout_plan_id = ws.workout_plan_id WHERE se.session_exercise_id = " . (int)$_POST['session_exercise_id'])->fetchColumn();
+        } elseif ($act === 'delete_nutrition_log') {
+            $targetMember = (int)$pdo->query("SELECT member_id FROM nutrition_logs WHERE nutrition_log_id = " . (int)$_POST['nutrition_log_id'])->fetchColumn();
         }
         if (!member_allowed($pdo, $me, $targetMember)) throw new RuntimeException('غير مسموح بتعديل هذا العضو.');
 
@@ -323,11 +325,37 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $w = $wq->fetchColumn();
             if ($w === false || $w === null) throw new RuntimeException('لا يوجد وزن مسجّل للعضو — أضِف قياسًا أولًا.');
             $t = nutrition_targets((float)$w, $goal);
-            $pdo->prepare("INSERT INTO nutrition_plans (member_id, coach_id, calories, protein_g, fat_g, carbs_g, hydration_target_l, meal_timing, status)
-                           VALUES (?,?,?,?,?,?,?,?, 'active')")->execute([
-                $targetMember, $coachId ?: null, $t['calories'], $t['protein_g'], $t['fat_g'], $t['carbs_g'],
-                $t['hydration_l'], 'مولّد تلقائيًا (' . $goal . ') — ' . $t['note'],
+            $meals = max(2, min(8, (int)($_POST['meals'] ?? 4)));
+            $trainMeal = max(0, min($meals, (int)($_POST['train_meal'] ?? 0)));
+            $dist = meal_distribution((int)$t['protein_g'], (int)$t['carbs_g'], (int)$t['fat_g'], $meals, $trainMeal);
+            $timing = implode(' · ', array_map(
+                fn($m) => $m['label'] . ': ' . $m['calories'] . 'ك/' . $m['protein'] . 'ب/' . $m['carbs'] . 'كارب/' . $m['fat'] . 'د', $dist));
+            $refeed = refeed_plan($goal, (float)$w, (int)$t['protein_g'], (int)$t['fat_g']);
+            $dbreak = diet_break_plan($goal);
+            $pdo->prepare("INSERT INTO nutrition_plans
+                             (member_id, coach_id, calories, protein_g, fat_g, carbs_g, hydration_target_l,
+                              meal_timing, refeed_protocol, diet_break_protocol, status)
+                           VALUES (?,?,?,?,?,?,?,?,?,?, 'active')")->execute([
+                $targetMember, $coachId ?: null, $t['calories'], $t['protein_g'], $t['fat_g'], $t['carbs_g'], $t['hydration_l'],
+                $timing,
+                $refeed['applicable'] ? ($refeed['frequency'] . ' — ' . $refeed['note']) : $refeed['note'],
+                $dbreak['applicable'] ? $dbreak['note'] : $dbreak['note'],
             ]);
+        } elseif ($act === 'log_nutrition') {
+            // سجلّ التزام يومي (صف واحد لكل عضو/يوم — تحديث عند التكرار)
+            $ad = in_array($_POST['adherence'] ?? '', ['on_plan','partial','off_plan'], true) ? $_POST['adherence'] : 'on_plan';
+            $pdo->prepare("INSERT INTO nutrition_logs (member_id, log_date, adherence, calories_actual, protein_actual, notes)
+                           VALUES (?,?,?,?,?,?)
+                           ON DUPLICATE KEY UPDATE adherence = VALUES(adherence),
+                             calories_actual = VALUES(calories_actual), protein_actual = VALUES(protein_actual),
+                             notes = VALUES(notes)")->execute([
+                $targetMember, $_POST['log_date'] ?: date('Y-m-d'), $ad,
+                $_POST['calories_actual'] !== '' ? (int)$_POST['calories_actual'] : null,
+                $_POST['protein_actual'] !== '' ? $_POST['protein_actual'] : null,
+                trim($_POST['notes'] ?? '') ?: null,
+            ]);
+        } elseif ($act === 'delete_nutrition_log') {
+            $pdo->prepare("DELETE FROM nutrition_logs WHERE nutrition_log_id = ?")->execute([(int)$_POST['nutrition_log_id']]);
         } elseif ($act === 'set_session_status') {
             $pdo->prepare("UPDATE workout_sessions SET completion_status = ? WHERE session_id = ?")
                 ->execute([$_POST['completion_status'], (int)$_POST['session_id']]);
@@ -694,6 +722,18 @@ $latestWeight = ($latestWeight === false || $latestWeight === null) ? null : (fl
 $nutriPreview = $latestWeight !== null ? nutrition_targets($latestWeight, in_array($defGoal, $GOALS, true) ? $defGoal : 'general_fitness') : null;
 $activeNplan = null;
 foreach ($nplans as $np) { if ($np['status'] === 'active') { $activeNplan = $np; break; } }
+// تحليل التغذية المتقدّم: توزيع الوجبات + refeed/diet-break + التزام آخر 14 يومًا
+$defGoalSafe = in_array($defGoal, $GOALS, true) ? $defGoal : 'general_fitness';
+$mealPlan = $refeedPlan = $dbreakPlan = null;
+if ($nutriPreview) {
+    $mealPlan   = meal_distribution((int)$nutriPreview['protein_g'], (int)$nutriPreview['carbs_g'], (int)$nutriPreview['fat_g'], 4, 3);
+    $refeedPlan = refeed_plan($defGoalSafe, (float)$latestWeight, (int)$nutriPreview['protein_g'], (int)$nutriPreview['fat_g']);
+    $dbreakPlan = diet_break_plan($defGoalSafe);
+}
+$nlogs = $pdo->prepare("SELECT * FROM nutrition_logs WHERE member_id = ? AND log_date >= DATE_SUB(CURDATE(), INTERVAL 14 DAY) ORDER BY log_date DESC");
+$nlogs->execute([$memberId]);
+$nlogs = $nlogs->fetchAll();
+$nCompliance = nutrition_compliance($nlogs);
 
 $crumb = '<a class="link" href="captains.php?coach=' . $coachId . '">' . h($coach['full_name']) . '</a> / <strong>' . h($member['full_name']) . '</strong>';
 echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.php">الكباتن</a> / ') . $crumb . '</div>';
@@ -1099,16 +1139,99 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
           <?php endforeach; ?>
         </table>
         <p class="muted" style="font-size:11px;margin:0 0 10px">ماء مقترح: <strong><?=h($nutriPreview['hydration_l'])?> لتر/يوم</strong>.</p>
-        <form method="post" style="margin:0" onsubmit="return confirm('حفظ خطة التغذية المقترحة كخطة نشطة؟')"><?=csrf_field()?>
+        <!-- توزيع الوجبات -->
+        <strong style="font-size:12px;color:#334155">🍽️ توزيع الوجبات (4 وجبات — التمرين قبل الوجبة 3)</strong>
+        <table style="margin:6px 0 10px;font-size:12px">
+          <tr><th>الوجبة</th><th>سعرات</th><th>بروتين</th><th>كارب</th><th>دهون</th></tr>
+          <?php foreach ($mealPlan as $m): ?>
+            <tr style="<?= $m['is_train'] ? 'background:#eff6ff' : '' ?>">
+              <td><?=h($m['label'])?></td><td><strong><?=h($m['calories'])?></strong></td>
+              <td><?=h($m['protein'])?>g</td><td><?=h($m['carbs'])?>g</td><td><?=h($m['fat'])?>g</td>
+            </tr>
+          <?php endforeach; ?>
+        </table>
+        <p class="muted" style="font-size:11px;margin:0 0 10px">البروتين موزّع بالتساوي لتحفيز بناء العضل · الكارب مركّز حول التمرين · الدهون أقل في وجبة التمرين.</p>
+        <!-- بروتوكولات refeed / diet-break -->
+        <?php if ($refeedPlan['applicable']): ?>
+          <div style="background:#f0fdf4;border:1px solid #dcfce7;border-radius:8px;padding:8px 10px;font-size:12px;margin-bottom:8px">
+            <strong style="color:#166534">🔄 أيام الكارب العالي (Refeed):</strong> <?=h($refeedPlan['frequency'])?><br>
+            <span class="muted"><?=h($refeedPlan['note'])?></span>
+          </div>
+          <div style="background:#f0fdf4;border:1px solid #dcfce7;border-radius:8px;padding:8px 10px;font-size:12px;margin-bottom:10px">
+            <strong style="color:#166534">⏸️ فترة راحة الدايت (Diet Break):</strong> <span class="muted"><?=h($dbreakPlan['note'])?></span>
+          </div>
+        <?php else: ?>
+          <p class="muted" style="font-size:11px;margin:0 0 10px"><?=h($refeedPlan['note'])?></p>
+        <?php endif; ?>
+        <form class="frm" method="post" style="margin:0" onsubmit="return confirm('حفظ خطة التغذية المقترحة (بتوزيع الوجبات والبروتوكولات) كخطة نشطة؟')"><?=csrf_field()?>
           <input type="hidden" name="action" value="generate_nutrition">
           <input type="hidden" name="member_id" value="<?=$memberId?>">
           <input type="hidden" name="coach_id" value="<?=$coachId?>">
-          <input type="hidden" name="goal_type" value="<?=h(in_array($defGoal,$GOALS,true)?$defGoal:'general_fitness')?>">
-          <button type="submit">🥗 حفظ كخطة تغذية</button>
+          <input type="hidden" name="goal_type" value="<?=h($defGoalSafe)?>">
+          <div><label>عدد الوجبات</label><input type="number" name="meals" value="4" min="2" max="8"></div>
+          <div><label>وجبة التمرين (#)</label><input type="number" name="train_meal" value="3" min="0" max="8"></div>
+          <div><button type="submit">🥗 حفظ كخطة تغذية</button></div>
         </form>
       <?php endif; ?>
     </div>
   </div>
+</section>
+
+<!-- ===== تتبّع الالتزام الغذائي ===== -->
+<section>
+  <h2>📆 تتبّع الالتزام الغذائي</h2>
+  <div class="grid2" style="margin-bottom:12px">
+    <div style="border:1px solid #eef2f7;border-radius:10px;padding:14px">
+      <strong style="font-size:13px;color:#334155">نسبة الالتزام — آخر 14 يومًا</strong>
+      <?php if ($nCompliance['pct'] === null): ?>
+        <p class="muted" style="font-size:12px;margin:8px 0 0">لا توجد سجلّات بعد — سجّل الالتزام اليومي من النموذج المجاور.</p>
+      <?php else: ?>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
+          <div style="font-size:32px;font-weight:800;color:<?=$nCompliance['color']?>"><?=$nCompliance['pct']?><span style="font-size:15px;font-weight:600">%</span></div>
+          <span class="badge" style="background:<?=$nCompliance['color']?>"><?=h($nCompliance['label'])?></span>
+          <span class="muted" style="font-size:12px">(<?=$nCompliance['count']?> يوم)</span>
+        </div>
+        <div style="height:8px;background:#eef2f7;border-radius:6px;margin-top:10px;overflow:hidden">
+          <div style="height:100%;width:<?=$nCompliance['pct']?>%;background:<?=$nCompliance['color']?>"></div>
+        </div>
+        <p class="muted" style="font-size:11px;margin:8px 0 0">التزام كامل=100% · جزئي=50% · خارج الخطة=0%.</p>
+      <?php endif; ?>
+    </div>
+    <div style="border:1px solid #eef2f7;border-radius:10px;padding:14px">
+      <strong style="font-size:13px;color:#334155">➕ تسجيل التزام يومي</strong>
+      <form class="frm" method="post" style="margin-top:8px"><?=csrf_field()?>
+        <input type="hidden" name="action" value="log_nutrition">
+        <input type="hidden" name="member_id" value="<?=$memberId?>">
+        <div><label>التاريخ</label><input type="date" name="log_date" value="<?=date('Y-m-d')?>" required></div>
+        <div><label>الالتزام</label><?=sel('adherence',['on_plan','partial','off_plan'],'on_plan')?></div>
+        <div><label>سعرات فعلية</label><input type="number" name="calories_actual"></div>
+        <div><label>بروتين فعلي (g)</label><input type="number" step="0.1" name="protein_actual"></div>
+        <div style="grid-column:1/-1"><label>ملاحظة</label><input name="notes"></div>
+        <div><button type="submit">حفظ اليوم</button></div>
+      </form>
+    </div>
+  </div>
+  <?php if ($nlogs): ?>
+    <h3>سجلّ آخر 14 يومًا</h3>
+    <table>
+      <tr><th>التاريخ</th><th>الالتزام</th><th>سعرات</th><th>بروتين</th><th>ملاحظة</th><th></th></tr>
+      <?php $adLbl = ['on_plan'=>['ملتزم','#16a34a'],'partial'=>['جزئي','#f59e0b'],'off_plan'=>['خارج الخطة','#dc2626']];
+      foreach ($nlogs as $lg): [$al,$ac] = $adLbl[$lg['adherence']]; ?>
+        <tr>
+          <td><?=h($lg['log_date'])?></td>
+          <td><span class="badge" style="background:<?=$ac?>"><?=h($al)?></span></td>
+          <td><?=h($lg['calories_actual'] ?? '—')?></td>
+          <td><?=h($lg['protein_actual'] ?? '—')?></td>
+          <td class="muted"><?=h($lg['notes'])?></td>
+          <td><form method="post" style="margin:0" onsubmit="return confirm('حذف سجلّ هذا اليوم؟')"><?=csrf_field()?>
+            <input type="hidden" name="action" value="delete_nutrition_log">
+            <input type="hidden" name="nutrition_log_id" value="<?=$lg['nutrition_log_id']?>">
+            <button type="submit" style="background:none;border:0;color:#dc2626;cursor:pointer;font-size:13px">🗑</button>
+          </form></td>
+        </tr>
+      <?php endforeach; ?>
+    </table>
+  <?php endif; ?>
 </section>
 
 <!-- ===== التخطيط الذكي ===== -->
