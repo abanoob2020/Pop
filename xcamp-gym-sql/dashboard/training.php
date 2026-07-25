@@ -121,3 +121,132 @@ function readiness_score(?float $avgRpe, int $overloadedGroups, int $plateauCoun
     if ($s >= 50) return [$s, 'تعافٍ متوسط', '#f59e0b'];
     return [$s, 'يحتاج راحة/تخفيف', '#dc2626'];
 }
+
+// =============================================================================
+// المولّد التلقائي للبرامج (بقواعد): الهدف + التقييم + الإصابات → برنامج كامل
+// =============================================================================
+
+/** يحدّد المرحلة التدريبية من الهدف + درجة الخطر من آخر تقييم */
+function phase_for_goal(string $goal, ?float $riskScore): string {
+    if ($riskScore !== null && $riskScore >= 80) return 'corrective';
+    if ($riskScore !== null && $riskScore >= 60) return 'stabilization';
+    return [
+        'muscle_gain' => 'hypertrophy', 'strength' => 'strength',
+        'performance' => 'power',       'fat_loss' => 'hypertrophy',
+        'rehab' => 'corrective',        'general_fitness' => 'maintenance',
+    ][$goal] ?? 'maintenance';
+}
+
+/** وصفة المجموعات/التكرارات/الجهد/الراحة لكل مرحلة */
+function phase_prescription(string $phase): array {
+    $map = [
+        'corrective'    => [2, '15',    6, 60,  'إصلاحي — حمل خفيف وتكرار عالٍ'],
+        'stabilization' => [3, '12-15', 7, 75,  'تثبيت — تحكّم وثبات'],
+        'hypertrophy'   => [3, '8-12',  8, 90,  'تضخيم — حجم متوسط'],
+        'strength'      => [4, '4-6',   8, 150, 'قوة — حمل مرتفع'],
+        'power'         => [4, '3-5',   7, 180, 'قدرة — سرعة وقوة'],
+        'maintenance'   => [3, '10-12', 7, 90,  'محافظة — توازن عام'],
+    ];
+    [$sets, $reps, $rpe, $rest, $label] = $map[$phase] ?? $map['maintenance'];
+    return ['sets' => $sets, 'reps' => $reps, 'rpe' => $rpe, 'rest' => $rest, 'label' => $label];
+}
+
+/**
+ * المجموعات العضلية الواجب تجنّبها بسبب إصابات نشطة/متعافية.
+ * $injuries: صفوف بها body_area و current_status.
+ */
+function injury_avoided_groups(array $injuries): array {
+    $map = [
+        'knee' => ['legs'], 'ركبة' => ['legs'], 'ankle' => ['legs'], 'كاحل' => ['legs'],
+        'back' => ['back','legs'], 'ظهر' => ['back','legs'], 'lumbar' => ['back','legs'],
+        'spine' => ['back','legs'], 'قطني' => ['back','legs'],
+        'shoulder' => ['shoulders','chest'], 'كتف' => ['shoulders','chest'],
+        'elbow' => ['arms'], 'كوع' => ['arms'], 'wrist' => ['arms'], 'رسغ' => ['arms'],
+        'hip' => ['legs','glutes'], 'ورك' => ['legs','glutes'],
+        'neck' => ['shoulders'], 'رقبة' => ['shoulders'],
+    ];
+    $avoid = [];
+    foreach ($injuries as $inj) {
+        $st = $inj['current_status'] ?? '';
+        if (!in_array($st, ['active','recovering'], true)) continue;
+        $area = mb_strtolower((string)($inj['body_area'] ?? ''));
+        foreach ($map as $kw => $groups) {
+            if (mb_strpos_compat($area, $kw)) $avoid = array_merge($avoid, $groups);
+        }
+    }
+    return array_values(array_unique($avoid));
+}
+
+/** بحث نصّي بسيط يعمل بدون mbstring (يرجّع true لو وُجدت السلسلة) */
+function mb_strpos_compat(string $haystack, string $needle): bool {
+    return $needle !== '' && strpos($haystack, $needle) !== false;
+}
+
+/**
+ * مخطط البرنامج حسب الهدف: قائمة جلسات، كل جلسة بها عنوان + مجموعات التركيز + يوم الإزاحة.
+ * أهداف القوة/التضخيم/الأداء → دفع/سحب/أرجل؛ الباقي → كامل الجسم ×3.
+ */
+function program_blueprint(string $goal): array {
+    if (in_array($goal, ['muscle_gain','strength','performance'], true)) {
+        return [
+            ['title' => 'دفع (صدر/كتف/تراي)', 'muscle_group' => 'push',     'day_offset' => 0, 'focus' => ['chest','shoulders','arms']],
+            ['title' => 'سحب (ظهر/باي)',      'muscle_group' => 'pull',     'day_offset' => 2, 'focus' => ['back','arms']],
+            ['title' => 'أرجل (أرجل/جلوت/كور)','muscle_group' => 'legs',     'day_offset' => 4, 'focus' => ['legs','glutes','core']],
+        ];
+    }
+    return [
+        ['title' => 'كامل الجسم A', 'muscle_group' => 'full body', 'day_offset' => 0, 'focus' => ['legs','chest','back','core']],
+        ['title' => 'كامل الجسم B', 'muscle_group' => 'full body', 'day_offset' => 2, 'focus' => ['legs','back','shoulders','core']],
+        ['title' => 'كامل الجسم C', 'muscle_group' => 'full body', 'day_offset' => 4, 'focus' => ['legs','chest','arms','core']],
+    ];
+}
+
+/**
+ * اختيار تمارين لجلسة: يغطّي مجموعات التركيز بالترتيب، يتجنّب المجموعات المُصابة،
+ * بحد أقصى $cap تمرينًا. $exByGroup: خريطة muscle_group => [صفوف التمارين].
+ */
+function select_session_exercises(array $exByGroup, array $focus, array $avoid, int $cap = 5): array {
+    $picked = [];
+    foreach ($focus as $g) {
+        if (in_array($g, $avoid, true)) continue;
+        foreach ($exByGroup[$g] ?? [] as $ex) {
+            if (count($picked) >= $cap) break 2;
+            $picked[] = $ex;
+            break; // تمرين واحد لكل مجموعة تركيز في التمريرة الأولى
+        }
+    }
+    // تمريرة ثانية لملء الباقي من نفس مجموعات التركيز
+    foreach ($focus as $g) {
+        if (in_array($g, $avoid, true)) continue;
+        foreach ($exByGroup[$g] ?? [] as $ex) {
+            if (count($picked) >= $cap) break 2;
+            if (!in_array($ex, $picked, true)) $picked[] = $ex;
+        }
+    }
+    return $picked;
+}
+
+// =============================================================================
+// تحليل التغذية الذكي (بقواعد): الوزن + الهدف → سعرات وماكروز مقترحة
+// =============================================================================
+
+/**
+ * أهداف تغذية مقترحة من وزن الجسم (كجم) + الهدف.
+ * صيانة ≈ 31 سعرة/كجم؛ تنشيف −20%؛ تضخيم +12%.
+ * بروتين 2.2 جم/كجم (تنشيف/تضخيم/قوة) وإلا 1.8؛ دهون 0.9 جم/كجم؛ الباقي كارب.
+ */
+function nutrition_targets(float $weightKg, string $goal): array {
+    if ($weightKg <= 0) return ['calories' => null, 'protein_g' => null, 'fat_g' => null, 'carbs_g' => null, 'hydration_l' => null, 'note' => 'أدخل وزنًا حديثًا للعضو أولًا'];
+    $maint = $weightKg * 31;
+    $adj   = ['fat_loss' => -0.20, 'muscle_gain' => 0.12][$goal] ?? 0.0;
+    $cal   = (int) (round($maint * (1 + $adj) / 10) * 10);
+    $proteinPerKg = in_array($goal, ['fat_loss','muscle_gain','strength'], true) ? 2.2 : 1.8;
+    $protein = (int) round($weightKg * $proteinPerKg);
+    $fat     = (int) round($weightKg * 0.9);
+    $carbs   = (int) max(0, round(($cal - ($protein * 4 + $fat * 9)) / 4));
+    $hyd     = round($weightKg * 0.035, 1);
+    $note = $adj < 0 ? 'عجز حراري ~20% للتنشيف مع بروتين مرتفع للحفاظ على العضل'
+          : ($adj > 0 ? 'فائض حراري ~12% للتضخيم النظيف'
+          : 'سعرات صيانة متوازنة');
+    return ['calories' => $cal, 'protein_g' => $protein, 'fat_g' => $fat, 'carbs_g' => $carbs, 'hydration_l' => $hyd, 'note' => $note];
+}
