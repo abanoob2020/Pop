@@ -266,6 +266,68 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
             $pdo->commit();
+        } elseif ($act === 'generate_program') {
+            // مولّد تلقائي: الهدف + آخر تقييم + الإصابات → برنامج كامل بلا قالب
+            $goal  = in_array($_POST['goal_type'] ?? '', $GOALS, true) ? $_POST['goal_type'] : 'general_fitness';
+            $weeks = max(1, min(12, (int)($_POST['weeks'] ?? 4)));
+            $start = $_POST['start_date'] ?: date('Y-m-d');
+            $end   = date('Y-m-d', strtotime($start) + ($weeks * 7 - 1) * 86400);
+            // درجة الخطر من آخر تقييم
+            $rq = $pdo->prepare("SELECT risk_score FROM assessments WHERE member_id = ? ORDER BY assessment_date DESC LIMIT 1");
+            $rq->execute([$targetMember]);
+            $risk = $rq->fetchColumn();
+            $risk = ($risk === false || $risk === null) ? null : (float)$risk;
+            $phase = phase_for_goal($goal, $risk);
+            $rx    = phase_prescription($phase);
+            // الإصابات النشطة/المتعافية → مجموعات تُتجنَّب
+            $iq = $pdo->prepare("SELECT body_area, current_status FROM injury_history WHERE member_id = ?");
+            $iq->execute([$targetMember]);
+            $avoid = injury_avoided_groups($iq->fetchAll());
+            // مكتبة التمارين النشطة مجمّعة حسب المجموعة العضلية
+            $exByGroup = [];
+            foreach ($pdo->query("SELECT exercise_id, name, muscle_group FROM exercises WHERE active = 1 ORDER BY exercise_id") as $ex)
+                $exByGroup[$ex['muscle_group']][] = $ex;
+            $blueprint = program_blueprint($goal);
+            $pdo->beginTransaction();
+            $pdo->prepare("INSERT INTO workout_plans (member_id, coach_id, goal_type, phase, start_date, end_date, status, notes)
+                           VALUES (?,?,?,?,?,?,'active',?)")->execute([
+                $targetMember, $coachId ?: null, $goal, $phase, $start, $end,
+                'مولّد تلقائيًا — ' . $rx['label'] . ($avoid ? ' · تجنّب: ' . implode('،', $avoid) : ''),
+            ]);
+            $planId = (int)$pdo->lastInsertId();
+            $insS = $pdo->prepare("INSERT INTO workout_sessions (workout_plan_id, session_date, muscle_group, completion_status, notes)
+                                   VALUES (?,?,?,'planned',?)");
+            $insX = $pdo->prepare("INSERT INTO session_exercises (session_id, exercise_id, sort_order, sets, reps, rest_sec, rpe, notes)
+                                   VALUES (?,?,?,?,?,?,?,?)");
+            $generated = 0;
+            foreach ($blueprint as $bp) {
+                $picks = select_session_exercises($exByGroup, $bp['focus'], $avoid, 5);
+                if (!$picks) continue; // لا تُنشئ جلسة فارغة (كل مجموعاتها مُصابة)
+                for ($w = 0; $w < $weeks; $w++) {
+                    $date = date('Y-m-d', strtotime($start) + ($w * 7 + (int)$bp['day_offset']) * 86400);
+                    $insS->execute([$planId, $date, $bp['muscle_group'], $bp['title']]);
+                    $sid = (int)$pdo->lastInsertId();
+                    $so = 1;
+                    foreach ($picks as $ex)
+                        $insX->execute([$sid, $ex['exercise_id'], $so++, $rx['sets'], $rx['reps'], $rx['rest'], $rx['rpe'], 'مقترح — ' . $rx['label']]);
+                    $generated++;
+                }
+            }
+            $pdo->commit();
+            if ($generated === 0) throw new RuntimeException('تعذّر توليد جلسات — قد تكون كل المجموعات مستبعَدة بسبب الإصابات.');
+        } elseif ($act === 'generate_nutrition') {
+            // تحليل تغذية ذكي → خطة تغذية مقترحة من الوزن + الهدف
+            $goal = in_array($_POST['goal_type'] ?? '', $GOALS, true) ? $_POST['goal_type'] : 'general_fitness';
+            $wq = $pdo->prepare("SELECT weight FROM progress_tracking WHERE member_id = ? AND weight IS NOT NULL ORDER BY record_date DESC LIMIT 1");
+            $wq->execute([$targetMember]);
+            $w = $wq->fetchColumn();
+            if ($w === false || $w === null) throw new RuntimeException('لا يوجد وزن مسجّل للعضو — أضِف قياسًا أولًا.');
+            $t = nutrition_targets((float)$w, $goal);
+            $pdo->prepare("INSERT INTO nutrition_plans (member_id, coach_id, calories, protein_g, fat_g, carbs_g, hydration_target_l, meal_timing, status)
+                           VALUES (?,?,?,?,?,?,?,?, 'active')")->execute([
+                $targetMember, $coachId ?: null, $t['calories'], $t['protein_g'], $t['fat_g'], $t['carbs_g'],
+                $t['hydration_l'], 'مولّد تلقائيًا (' . $goal . ') — ' . $t['note'],
+            ]);
         } elseif ($act === 'set_session_status') {
             $pdo->prepare("UPDATE workout_sessions SET completion_status = ? WHERE session_id = ?")
                 ->execute([$_POST['completion_status'], (int)$_POST['session_id']]);
@@ -621,6 +683,17 @@ $mComp = $pdo->prepare("SELECT SUM(ws.completion_status = 'completed') AS d, COU
                         WHERE wp.member_id = ? AND ws.session_date BETWEEN DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND CURDATE()");
 $mComp->execute([$memberId]);
 $mComp = $mComp->fetch();
+// مدخلات المولّد الذكي: الهدف الافتراضي (من آخر برنامج) + أحدث وزن + معاينة أهداف التغذية
+$defGoalQ = $pdo->prepare("SELECT goal_type FROM workout_plans WHERE member_id = ? ORDER BY start_date DESC, workout_plan_id DESC LIMIT 1");
+$defGoalQ->execute([$memberId]);
+$defGoal = $defGoalQ->fetchColumn() ?: 'general_fitness';
+$lwQ = $pdo->prepare("SELECT weight FROM progress_tracking WHERE member_id = ? AND weight IS NOT NULL ORDER BY record_date DESC LIMIT 1");
+$lwQ->execute([$memberId]);
+$latestWeight = $lwQ->fetchColumn();
+$latestWeight = ($latestWeight === false || $latestWeight === null) ? null : (float)$latestWeight;
+$nutriPreview = $latestWeight !== null ? nutrition_targets($latestWeight, in_array($defGoal, $GOALS, true) ? $defGoal : 'general_fitness') : null;
+$activeNplan = null;
+foreach ($nplans as $np) { if ($np['status'] === 'active') { $activeNplan = $np; break; } }
 
 $crumb = '<a class="link" href="captains.php?coach=' . $coachId . '">' . h($coach['full_name']) . '</a> / <strong>' . h($member['full_name']) . '</strong>';
 echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.php">الكباتن</a> / ') . $crumb . '</div>';
@@ -973,6 +1046,69 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
     <div><button type="submit">حفظ الإصابة</button></div>
   </form>
   <p class="muted" style="font-size:12px;margin:10px 0 0">شدة high/critical: توقَف برامج العضو النشطة ويتحوّل لـ paused مع إنذار injury ومهمة إحالة طبية عاجلة — تلقائيًا.</p>
+</section>
+
+<!-- ===== المولّد الذكي ===== -->
+<section>
+  <h2>🤖 المولّد الذكي (برنامج + تغذية)</h2>
+  <div class="grid2">
+    <!-- توليد برنامج تدريبي -->
+    <div style="border:1px solid #eef2f7;border-radius:10px;padding:14px">
+      <strong style="font-size:14px;color:#334155">🏋️ توليد برنامج كامل تلقائيًا</strong>
+      <p class="muted" style="font-size:12px;margin:6px 0 10px">يبني برنامجًا حسب الهدف + آخر تقييم (المرحلة) + الإصابات النشطة (يتجنّب العضلات المصابة)، مع مجموعات/تكرارات/جهد مناسبة لكل مرحلة.</p>
+      <?php if ($injuries): $av = injury_avoided_groups($injuries); if ($av): ?>
+        <div style="background:#fef3c7;color:#92400e;padding:8px 10px;border-radius:8px;font-size:12px;margin-bottom:10px">⚠️ سيتم تجنّب: <strong><?=h(implode('، ', $av))?></strong> (بسبب إصابات نشطة/متعافية).</div>
+      <?php endif; endif; ?>
+      <form class="frm" method="post" onsubmit="return confirm('توليد برنامج جديد للعضو؟')"><?=csrf_field()?>
+        <input type="hidden" name="action" value="generate_program">
+        <input type="hidden" name="member_id" value="<?=$memberId?>">
+        <input type="hidden" name="coach_id" value="<?=$coachId?>">
+        <div><label>الهدف</label><?=sel('goal_type',$GOALS,in_array($defGoal,$GOALS,true)?$defGoal:'general_fitness')?></div>
+        <div><label>عدد الأسابيع</label><input type="number" name="weeks" value="4" min="1" max="12"></div>
+        <div><label>تاريخ البداية</label><input type="date" name="start_date" value="<?=date('Y-m-d')?>" required></div>
+        <div><button type="submit">🤖 توليد البرنامج</button></div>
+      </form>
+      <?php if ($lastRisk !== false): ?><p class="muted" style="font-size:11px;margin:8px 0 0">آخر درجة خطر: <?=h($lastRisk)?> → المرحلة تُختار تلقائيًا (≥80 إصلاحي · ≥60 تثبيت).</p><?php endif; ?>
+    </div>
+    <!-- تحليل التغذية الذكي -->
+    <div style="border:1px solid #eef2f7;border-radius:10px;padding:14px">
+      <strong style="font-size:14px;color:#334155">🥗 تحليل التغذية الذكي</strong>
+      <?php if (!$nutriPreview): ?>
+        <p class="muted" style="font-size:12px;margin:8px 0 0">لا يوجد وزن مسجّل — أضِف قياسًا في «متابعة التقدّم» لتظهر الأهداف المقترحة.</p>
+      <?php else: ?>
+        <p class="muted" style="font-size:12px;margin:6px 0 10px">مقترح من أحدث وزن (<strong><?=h($latestWeight)?> كجم</strong>) والهدف — <?=h($nutriPreview['note'])?>.</p>
+        <table style="margin:0 0 10px">
+          <tr><th></th><th>المقترح</th><?php if ($activeNplan): ?><th>الحالي</th><th>الفرق</th><?php endif; ?></tr>
+          <?php
+          $rows = [['السعرات', 'calories', $nutriPreview['calories'], 'kcal'],
+                   ['البروتين', 'protein_g', $nutriPreview['protein_g'], 'g'],
+                   ['الدهون', 'fat_g', $nutriPreview['fat_g'], 'g'],
+                   ['الكارب', 'carbs_g', $nutriPreview['carbs_g'], 'g']];
+          foreach ($rows as [$lbl, $key, $val, $unit]):
+            $cur = $activeNplan ? (float)$activeNplan[$key] : null;
+            $diff = $cur !== null ? $val - $cur : null;
+          ?>
+            <tr>
+              <td><strong><?=$lbl?></strong></td>
+              <td><strong><?=h($val)?></strong> <span class="muted"><?=$unit?></span></td>
+              <?php if ($activeNplan): ?>
+                <td class="muted"><?=h((int)$cur)?></td>
+                <td style="color:<?= $diff == 0 ? '#64748b' : ($diff > 0 ? '#16a34a' : '#dc2626') ?>;font-weight:600"><?= $diff === null ? '—' : ($diff > 0 ? '▲+' : ($diff < 0 ? '▼' : '')) . h($diff) ?></td>
+              <?php endif; ?>
+            </tr>
+          <?php endforeach; ?>
+        </table>
+        <p class="muted" style="font-size:11px;margin:0 0 10px">ماء مقترح: <strong><?=h($nutriPreview['hydration_l'])?> لتر/يوم</strong>.</p>
+        <form method="post" style="margin:0" onsubmit="return confirm('حفظ خطة التغذية المقترحة كخطة نشطة؟')"><?=csrf_field()?>
+          <input type="hidden" name="action" value="generate_nutrition">
+          <input type="hidden" name="member_id" value="<?=$memberId?>">
+          <input type="hidden" name="coach_id" value="<?=$coachId?>">
+          <input type="hidden" name="goal_type" value="<?=h(in_array($defGoal,$GOALS,true)?$defGoal:'general_fitness')?>">
+          <button type="submit">🥗 حفظ كخطة تغذية</button>
+        </form>
+      <?php endif; ?>
+    </div>
+  </div>
 </section>
 
 <!-- ===== التخطيط الذكي ===== -->
