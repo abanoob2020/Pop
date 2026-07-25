@@ -94,7 +94,8 @@ function page_head(string $title, string $active = ''): void {
 <title><?=h($title)?> — Xcamp Gym</title>
 <style>
   * { box-sizing: border-box; }
-  body { margin:0; font-family: system-ui, "Segoe UI", Tahoma, sans-serif; background:#f1f5f9; color:#0f172a; }
+  html, body { overflow-x: hidden; }
+  body { margin:0; font-family: system-ui, "Segoe UI", Tahoma, sans-serif; background:#f1f5f9; color:#0f172a; max-width:100%; }
   header { background:#0f172a; color:#fff; padding:14px 24px; display:flex; align-items:center; gap:20px; flex-wrap:wrap; }
   header .brand { font-size:18px; font-weight:800; }
   header nav a { color:#cbd5e1; text-decoration:none; padding:6px 12px; border-radius:8px; font-size:14px; }
@@ -129,12 +130,43 @@ function page_head(string $title, string $active = ''): void {
   .err code { display:block; margin-top:8px; font-size:13px; opacity:.85; word-break:break-all; }
   .empty { color:#94a3b8; padding:10px 0; }
   .crumb { margin-bottom:16px; font-size:14px; }
+  /* ---- المرحلة 4: التبويبات ---- */
+  .tabbar { display:none; gap:6px; overflow-x:auto; background:#fff; border-radius:12px; padding:8px; margin-bottom:20px;
+            box-shadow:0 1px 3px rgba(0,0,0,.06); position:sticky; top:0; z-index:20; -webkit-overflow-scrolling:touch; }
+  .tabbar.ready { display:flex; }
+  .tabbar button { flex:0 0 auto; border:0; background:transparent; padding:9px 15px; border-radius:8px; font-size:14px;
+                   font-weight:600; color:#475569; cursor:pointer; white-space:nowrap; font-family:inherit; transition:background .12s,color .12s; }
+  .tabbar button:hover { background:#f1f5f9; }
+  .tabbar button.active { background:#2563eb; color:#fff; }
+  /* ---- المرحلة 4: زر قائمة الموبايل ---- */
+  .nav-toggle { display:none; background:#1e293b; color:#fff; border:0; border-radius:8px; padding:6px 12px; font-size:18px; cursor:pointer; line-height:1; }
+  /* ---- المرحلة 4: توست AJAX ---- */
+  .toast { position:fixed; inset-block-end:20px; inset-inline-start:50%; transform:translateX(50%) translateY(24px);
+           background:#0f172a; color:#fff; padding:12px 20px; border-radius:10px; font-size:14px; font-weight:600;
+           box-shadow:0 8px 24px rgba(0,0,0,.25); opacity:0; pointer-events:none; transition:opacity .2s, transform .2s; z-index:60; }
+  .toast.show { opacity:1; transform:translateX(50%) translateY(0); }
+  .toast.err { background:#991b1b; }
+  .ajax-busy { opacity:.6; pointer-events:none; }
+  /* ---- المرحلة 4: تحسينات الموبايل ---- */
+  @media (max-width:720px){
+    header { padding:12px 16px; gap:10px; }
+    header .brand { font-size:16px; }
+    header nav { display:none; flex-basis:100%; flex-direction:column; gap:4px; }
+    header.nav-open nav { display:flex; }
+    header .sub { flex-basis:100%; margin-inline-start:0; flex-wrap:wrap; gap:6px; font-size:11px; word-break:break-word; }
+    .nav-toggle { display:inline-block; margin-inline-start:auto; }
+    main { padding:14px; }
+    section { padding:14px; overflow-wrap:anywhere; }
+    section table { display:block; overflow-x:auto; white-space:nowrap; -webkit-overflow-scrolling:touch; }
+    form.frm { grid-template-columns:1fr 1fr; }
+  }
 </style>
 </head>
 <body>
 <header>
   <span class="brand">🏋️ Xcamp Gym</span>
   <?php if ($u): ?>
+  <button class="nav-toggle" type="button" aria-label="القائمة">☰</button>
   <nav>
     <?php if (is_manager()): ?><a href="index.php" class="<?= $active==='dash' ? 'active' : '' ?>">لوحة الإدارة</a><?php endif; ?>
     <a href="captains.php" class="<?= $active==='captains' ? 'active' : '' ?>">واجهة الكباتن</a>
@@ -153,7 +185,85 @@ function page_head(string $title, string $active = ''): void {
 <?php
 }
 
-function page_foot(): void { echo "</main></body></html>"; }
+function page_foot(): void {
+    echo "</main>";
+    page_script();
+    echo "</body></html>";
+}
+
+/** المرحلة 4: سكربت مشترك — قائمة الموبايل + التبويبات + حفظ AJAX (تحسين تدريجي) */
+function page_script(): void {
+    ?>
+<div class="toast" id="toast"></div>
+<script>
+(function(){
+  "use strict";
+  var header = document.querySelector('header');
+  var toggle = document.querySelector('.nav-toggle');
+  if (toggle && header) toggle.addEventListener('click', function(){ header.classList.toggle('nav-open'); });
+
+  function tabKey(){ return 'xtab:' + location.pathname + location.search; }
+  function bar(){ return document.querySelector('.tabbar'); }
+  function panels(){ return [].slice.call(document.querySelectorAll('main [data-tab]')); }
+  function tabBtns(){ var b = bar(); return b ? [].slice.call(b.querySelectorAll('[data-tabtarget]')) : []; }
+
+  function activate(name, save){
+    var btns = tabBtns(); if (!btns.length) return;
+    var valid = btns.some(function(t){ return t.getAttribute('data-tabtarget') === name; });
+    if (!valid) name = btns[0].getAttribute('data-tabtarget');
+    panels().forEach(function(s){ s.style.display = (s.getAttribute('data-tab') === name) ? '' : 'none'; });
+    btns.forEach(function(t){ t.classList.toggle('active', t.getAttribute('data-tabtarget') === name); });
+    if (save !== false){ try { sessionStorage.setItem(tabKey(), name); } catch(e){} }
+  }
+  function initTabs(){
+    var b = bar(); if (!b) return;
+    b.classList.add('ready');
+    tabBtns().forEach(function(t){
+      t.addEventListener('click', function(){ activate(t.getAttribute('data-tabtarget')); });
+    });
+    var stored = null; try { stored = sessionStorage.getItem(tabKey()); } catch(e){}
+    var want = (location.hash || '').replace('#','') || stored;
+    activate(want, false);
+  }
+  initTabs();
+
+  var toastEl = document.getElementById('toast'), toastT;
+  function toast(msg, isErr){
+    if (!toastEl) return;
+    toastEl.textContent = msg; toastEl.className = 'toast show' + (isErr ? ' err' : '');
+    clearTimeout(toastT); toastT = setTimeout(function(){ toastEl.className = 'toast' + (isErr ? ' err' : ''); }, 2600);
+  }
+
+  // حفظ AJAX: يعترض نماذج POST داخل main (عدا رفع الملفات ومن يطلب التخطّي)
+  document.addEventListener('submit', function(e){
+    var f = e.target;
+    if (!f || f.tagName !== 'FORM' || e.defaultPrevented) return;              // احترم confirm() الذي ألغى الإرسال
+    if ((f.method || '').toLowerCase() !== 'post') return;                     // نماذج GET (بحث) تعمل عاديًا
+    if ((f.enctype || '').indexOf('multipart') !== -1) return;                 // رفع الملفات: إرسال عادي
+    if (f.hasAttribute('data-no-ajax') || !f.closest('main')) return;
+    e.preventDefault();
+    var main = document.querySelector('main');
+    var btn = f.querySelector('button[type=submit], button:not([type])');
+    if (btn) btn.disabled = true;
+    main.classList.add('ajax-busy');
+    fetch(f.action || location.href, { method:'POST', body:new FormData(f), redirect:'follow', headers:{'X-Requested-With':'fetch'} })
+      .then(function(r){ return r.text(); })
+      .then(function(html){
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        var nm = doc.querySelector('main');
+        if (!nm) throw new Error('no main');
+        var errBox = nm.querySelector('.err');
+        main.innerHTML = nm.innerHTML;
+        main.classList.remove('ajax-busy');
+        initTabs();
+        toast(errBox ? errBox.textContent.trim().slice(0,80) : 'تم الحفظ ✓', !!errBox);
+      })
+      .catch(function(){ main.classList.remove('ajax-busy'); if (btn) btn.disabled = false; f.submit(); });
+  });
+})();
+</script>
+    <?php
+}
 
 function db_error_box(string $msg): void {
     ?>
