@@ -172,6 +172,7 @@ function page_head(string $title, string $active = ''): void {
     <a href="captains.php" class="<?= $active==='captains' ? 'active' : '' ?>">واجهة الكباتن</a>
     <a href="crm.php" class="<?= $active==='crm' ? 'active' : '' ?>">CRM</a>
     <a href="retention.php" class="<?= $active==='retention' ? 'active' : '' ?>">الاحتفاظ</a>
+    <a href="revenue.php" class="<?= $active==='revenue' ? 'active' : '' ?>">الإيرادات</a>
     <a href="calendar.php" class="<?= $active==='calendar' ? 'active' : '' ?>">التقويم</a>
     <a href="templates.php" class="<?= $active==='templates' ? 'active' : '' ?>">التمارين والقوالب</a>
   </nav>
