@@ -90,6 +90,7 @@ page_head('تسجيل الدخول');
       مدير: <code>admin@xcamp.com / admin123</code><br>
       كابتن: <code>coach1@xcamp.com / coach123</code>
     </p>
+    <p class="muted" style="font-size:12px;margin-top:6px">عضو؟ ادخل بوابتك من <a class="link" href="member_login.php">هنا</a>.</p>
   </section>
 </div>
 <?php page_foot();

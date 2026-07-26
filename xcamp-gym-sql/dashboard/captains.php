@@ -189,6 +189,14 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
                     trim($_POST['notes'] ?? '') ?: null,
                     $targetMember,
                 ]);
+        } elseif ($act === 'set_member_portal') {
+            // تفعيل/إعادة تعيين كلمة مرور بوابة العضو
+            $pw = (string)($_POST['portal_password'] ?? '');
+            if (strlen($pw) < 6) throw new RuntimeException('كلمة مرور البوابة يجب أن تكون 6 أحرف على الأقل.');
+            $hash = password_hash($pw, PASSWORD_BCRYPT);
+            $pdo->prepare("INSERT INTO member_auth (member_id, password_hash, portal_enabled) VALUES (?,?,1)
+                           ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash), portal_enabled = 1")
+                ->execute([$targetMember, $hash]);
         } elseif ($act === 'add_injury') {
             // إدخال الإصابة يشغّل sp_handle_injury_event عبر الـ trigger
             // (high/critical: إيقاف برامج العضو + العضو paused + إنذار injury + مهمة إحالة طبية عاجلة)
@@ -776,6 +784,15 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
       <div style="grid-column:1/-1"><label>ملاحظات</label><input name="notes" value="<?=h($member['notes'])?>"></div>
       <div><button type="submit">حفظ التعديلات</button></div>
     </form>
+  </details>
+  <details style="margin-top:8px"><summary class="link" style="cursor:pointer;font-size:13px">🔑 بوابة العضو (تفعيل / إعادة تعيين كلمة المرور)</summary>
+    <form class="frm" method="post" style="margin-top:8px"><?=csrf_field()?>
+      <input type="hidden" name="action" value="set_member_portal">
+      <input type="hidden" name="member_id" value="<?=$memberId?>">
+      <div style="grid-column:1/-1"><label>كلمة مرور البوابة (٦ أحرف على الأقل)</label><input name="portal_password" minlength="6" required></div>
+      <div><button type="submit">تفعيل البوابة</button></div>
+    </form>
+    <p class="muted" style="font-size:11px;margin:6px 0 0">يدخل العضو من <code>member_login.php</code> بالهاتف أو البريد + كلمة المرور دي.</p>
   </details>
 </section>
 
