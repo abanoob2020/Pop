@@ -337,3 +337,73 @@ function nutrition_compliance(array $logs): array {
     if ($pct >= 60) return ['pct' => $pct, 'label' => 'التزام جيد', 'color' => '#f59e0b', 'count' => $n];
     return ['pct' => $pct, 'label' => 'التزام ضعيف', 'color' => '#dc2626', 'count' => $n];
 }
+
+// =============================================================================
+// محرّك الاحتفاظ ومكافحة التسرّب (بقواعد): تسميات الإنذارات + التدخّل + قوالب الرسائل
+// =============================================================================
+
+/** بيانات عرض نوع الإنذار: ['label','color','priority'] (الأولوية أعلى = أخطر) */
+function flag_meta(string $type): array {
+    $map = [
+        'injury'         => ['إصابة',            '#dc2626', 9],
+        'payment_failed' => ['فشل الدفع',        '#dc2626', 8],
+        'high_risk'      => ['خطر مرتفع',        '#dc2626', 7],
+        'no_progress'    => ['لا تقدّم',         '#f59e0b', 5],
+        'low_attendance' => ['غياب متكرر',       '#f59e0b', 4],
+        'no_show'        => ['عدم حضور',         '#f59e0b', 4],
+        'low_motivation' => ['دافعية منخفضة',    '#f59e0b', 3],
+        'low_response'   => ['ضعف تفاعل',        '#6b7280', 2],
+    ];
+    [$label, $color, $prio] = $map[$type] ?? [$type, '#6b7280', 1];
+    return ['label' => $label, 'color' => $color, 'priority' => $prio];
+}
+
+/**
+ * التدخّل الموصى به: يُختار حسب أخطر إنذار مفتوح.
+ * يرجّع ['action','scenario','color'] حيث scenario يربط بقالب الرسالة.
+ */
+function recommended_intervention(array $flagTypes): array {
+    $playbook = [
+        'injury'         => ['متابعة طبية عاجلة + تحويل لبرنامج تأهيلي مؤقّت', 'reassess',   '#dc2626'],
+        'payment_failed' => ['تذكير دفع ودّي + عرض خيار تقسيط/تمديد',          'payment',    '#dc2626'],
+        'high_risk'      => ['تدخّل المدير + خطة احتفاظ مخصّصة ومكالمة شخصية',  'checkin',    '#dc2626'],
+        'no_progress'    => ['إعادة تقييم + تعديل البرنامج وتحديد هدف قصير',    'reassess',   '#f59e0b'],
+        'low_attendance' => ['تواصل تحفيزي + جدولة جلسة محدّدة هذا الأسبوع',    'motivation', '#f59e0b'],
+        'no_show'        => ['اتصال لإعادة الجدولة + تذكير بقيمة الاشتراك',     'motivation', '#f59e0b'],
+        'low_motivation' => ['مكالمة تحفيز + تحدٍّ قصير قابل للتحقيق',          'motivation', '#f59e0b'],
+        'low_response'   => ['تغيير قناة التواصل + رسالة قصيرة مباشرة',        'checkin',    '#6b7280'],
+    ];
+    $best = null; $bestPrio = -1;
+    foreach ($flagTypes as $t) {
+        $p = flag_meta($t)['priority'];
+        if ($p > $bestPrio) { $bestPrio = $p; $best = $t; }
+    }
+    if ($best === null || !isset($playbook[$best]))
+        return ['action' => 'تواصل تحقّق دوري للحفاظ على العلاقة', 'scenario' => 'checkin', 'color' => '#6b7280'];
+    [$action, $scenario, $color] = $playbook[$best];
+    return ['action' => $action, 'scenario' => $scenario, 'color' => $color];
+}
+
+/** قالب رسالة جاهز حسب السيناريو (يُدرج اسم العضو). */
+function retention_message(string $scenario, string $name): array {
+    $n = trim($name) !== '' ? $name : 'بطلنا';
+    $templates = [
+        'winback'    => ['winback', "أهلًا {$n} 👋 وحشتنا في الجيم! رجوعك يهمّنا — جهّزنالك عرض خاص لاستئناف اشتراكك وبرنامج جديد يناسب هدفك. تحب نحجزلك جلسة رجوع؟"],
+        'payment'    => ['renewal', "أهلًا {$n} 🙏 لاحظنا إن فيه مشكلة في دفع الاشتراك. حابين نسهّلها عليك — عندنا خيار تقسيط أو تمديد. تحب نرتّبها مع بعض؟"],
+        'motivation' => ['followup', "{$n} 💪 افتقدناك في الجلسات! خطوة صغيرة النهارده بتفرق. جهّزت لك تمرين خفيف نبدأ بيه — إيه أنسب وقت أشوفك فيه هذا الأسبوع؟"],
+        'reassess'   => ['progress', "أهلًا {$n} 📊 مرّ وقت من آخر تقييم. تعال نراجع تقدّمك ونعدّل البرنامج عشان توصل لهدفك أسرع — أحجزلك موعد إعادة تقييم؟"],
+        'renewal'    => ['renewal', "أهلًا {$n} ⏰ اشتراكك قرب يخلص. جدّد بدري وكمّل تقدّمك بدون انقطاع — تحب أجهّزلك التجديد؟"],
+        'checkin'    => ['followup', "أهلًا {$n} 😊 بنطمّن عليك — إزاي ماشي مع البرنامج؟ لو محتاج أي مساعدة أو تعديل إحنا موجودين."],
+    ];
+    [$msgType, $text] = $templates[$scenario] ?? $templates['checkin'];
+    return ['message_type' => $msgType, 'text' => $text];
+}
+
+/** نطاق خطر التسرّب من درجة الخطر: ['label','color'] */
+function churn_band(?float $riskScore): array {
+    if ($riskScore === null) return ['غير مقيَّم', '#94a3b8'];
+    if ($riskScore >= 80) return ['حرج', '#dc2626'];
+    if ($riskScore >= 60) return ['مرتفع', '#f59e0b'];
+    if ($riskScore >= 40) return ['متوسط', '#eab308'];
+    return ['منخفض', '#16a34a'];
+}
