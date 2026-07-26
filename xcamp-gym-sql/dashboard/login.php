@@ -77,7 +77,7 @@ page_head('تسجيل الدخول');
   <section>
     <h2 style="text-align:center">🔐 تسجيل دخول الموظفين</h2>
     <?php if ($error): ?><div class="err" style="margin:0 0 14px"><?=h($error)?></div><?php endif; ?>
-    <form method="post" style="display:grid;gap:12px">
+    <form method="post" data-no-ajax style="display:grid;gap:12px">
       <?=csrf_field()?>
       <div><label style="font-size:13px;color:#475569;display:block;margin-bottom:4px">البريد الإلكتروني</label>
         <input name="email" type="email" required autofocus style="width:100%;padding:9px 11px;border:1px solid #cbd5e1;border-radius:8px"></div>

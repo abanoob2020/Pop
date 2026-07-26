@@ -40,7 +40,7 @@ page_head('حسابي');
     <?php if ($flash): ?><div class="flash"><?=h($flash)?></div><?php endif; ?>
     <?php if ($error): ?><div class="err" style="margin:0 0 14px"><?=h($error)?></div><?php endif; ?>
     <h3>تغيير كلمة المرور</h3>
-    <form method="post" style="display:grid;gap:12px">
+    <form method="post" data-no-ajax style="display:grid;gap:12px">
       <?=csrf_field()?>
       <div><label style="font-size:13px;color:#475569;display:block;margin-bottom:4px">كلمة المرور الحالية</label>
         <input name="current_password" type="password" required style="width:100%;padding:9px 11px;border:1px solid #cbd5e1;border-radius:8px"></div>

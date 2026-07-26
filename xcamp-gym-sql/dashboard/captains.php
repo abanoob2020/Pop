@@ -739,8 +739,17 @@ $crumb = '<a class="link" href="captains.php?coach=' . $coachId . '">' . h($coac
 echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.php">الكباتن</a> / ') . $crumb . '</div>';
 ?>
 
+<nav class="tabbar" aria-label="أقسام العضو">
+  <button type="button" data-tabtarget="overview">👤 نظرة عامة</button>
+  <button type="button" data-tabtarget="training">🏋️ التمرين</button>
+  <button type="button" data-tabtarget="nutrition">🥗 التغذية</button>
+  <button type="button" data-tabtarget="intel">🧠 الذكاء</button>
+  <button type="button" data-tabtarget="health">📈 الصحة والتقدّم</button>
+  <button type="button" data-tabtarget="followup">📆 المتابعة</button>
+</nav>
+
 <!-- ===== بيانات العضو ===== -->
-<section>
+<section data-tab="overview">
   <h2>👤 <?=h($member['full_name'])?>
     <span class="badge" style="margin-inline-start:6px"><?=h($member['status'])?></span>
   </h2>
@@ -770,9 +779,8 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
   </details>
 </section>
 
-<div class="grid2">
   <!-- ===== برامج التمرين ===== -->
-  <section>
+  <section data-tab="training">
     <h2>🏋️ برامج التمرين
       <?php if ((int)($mComp['t'] ?? 0) > 0):
         $mp = round(100 * (int)$mComp['d'] / (int)$mComp['t']);
@@ -893,7 +901,7 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
   </section>
 
   <!-- ===== التغذية ===== -->
-  <section>
+  <section data-tab="nutrition">
     <h2>🥗 خطط التغذية</h2>
     <?php if (!$nplans): ?><div class="empty">لا توجد خطط تغذية بعد.</div><?php endif; ?>
     <?php foreach ($nplans as $n): ?>
@@ -959,11 +967,8 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
       <div><button type="submit">إضافة مكمّل</button></div>
     </form>
   </section>
-</div>
-
-<div class="grid2">
   <!-- ===== التقييمات ===== -->
-  <section>
+  <section data-tab="health">
     <h2>🧪 التقييمات (تشغّل أتمتة الخطر)</h2>
     <?php if (!$assessments): ?><div class="empty">لا توجد تقييمات بعد.</div><?php else: ?>
       <table><tr><th>التاريخ</th><th>خطر</th><th>التصنيف</th><th>توصية</th><th>مراجعة قادمة</th></tr>
@@ -993,7 +998,7 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
   </section>
 
   <!-- ===== المتابعات ===== -->
-  <section>
+  <section data-tab="followup">
     <h2>☎️ المتابعات</h2>
     <?php if (!$fups): ?><div class="empty">لا توجد متابعات بعد.</div><?php else: ?>
       <table><tr><th>التاريخ</th><th>السبب</th><th>القناة</th><th>الرد</th><th>الإجراء</th></tr>
@@ -1018,10 +1023,9 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
     </form>
     <p class="muted" style="font-size:12px;margin:10px 0 0">no_response: تُفتح مهمة اتصال تلقائيًا · booked/converted: تُحلّ الإنذارات المفتوحة تلقائيًا.</p>
   </section>
-</div>
 
 <!-- ===== مهام وإنذارات العضو ===== -->
-<section>
+<section data-tab="followup">
   <h2>🗂️ المهام والإنذارات المفتوحة لهذا العضو</h2>
   <div class="grid2">
     <div>
@@ -1055,7 +1059,7 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
 </section>
 
 <!-- ===== سجل الإصابات ===== -->
-<section>
+<section data-tab="health">
   <h2>🩹 سجل الإصابات (يشغّل أتمتة الإيقاف)</h2>
   <?php if (!$injuries): ?><div class="empty">لا توجد إصابات مسجّلة.</div><?php else: ?>
     <table><tr><th>التاريخ</th><th>المنطقة</th><th>النوع</th><th>الشدة</th><th>الحالة + التصريح الطبي</th><th>ملاحظات</th></tr>
@@ -1089,7 +1093,7 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
 </section>
 
 <!-- ===== المولّد الذكي ===== -->
-<section>
+<section data-tab="intel">
   <h2>🤖 المولّد الذكي (برنامج + تغذية)</h2>
   <div class="grid2">
     <!-- توليد برنامج تدريبي -->
@@ -1178,7 +1182,7 @@ echo '<div class="crumb">' . ($isCoach ? '' : '<a class="link" href="captains.ph
 </section>
 
 <!-- ===== تتبّع الالتزام الغذائي ===== -->
-<section>
+<section data-tab="nutrition">
   <h2>📆 تتبّع الالتزام الغذائي</h2>
   <div class="grid2" style="margin-bottom:12px">
     <div style="border:1px solid #eef2f7;border-radius:10px;padding:14px">
@@ -1248,7 +1252,7 @@ $plan = progression_plan($planWeekIndex, $rpeAvg, $anyPlateau);
 [$rScore, $rLabel, $rColor] = readiness_score($rpeAvg, $overloadedGroups, $plateauCount);
 $hasIntel = $weeklyVolume || $loadIntel;
 ?>
-<section>
+<section data-tab="intel">
   <h2>🗓️ التخطيط الذكي</h2>
   <?php if (!$hasIntel): ?>
     <div class="empty">تظهر خطة التدرّج ومؤشرات الحجم والتعافي بعد تسجيل أحمال فعلية للعضو.</div>
@@ -1302,7 +1306,7 @@ $hasIntel = $weeklyVolume || $loadIntel;
 </section>
 
 <!-- ===== ذكاء الأحمال ===== -->
-<section>
+<section data-tab="intel">
   <h2>🧠 ذكاء الأحمال</h2>
   <?php if ($deload): ?>
     <div style="background:#fef3c7;color:#92400e;padding:12px 16px;border-radius:10px;margin-bottom:14px;font-weight:600">
@@ -1342,7 +1346,7 @@ $hasIntel = $weeklyVolume || $loadIntel;
 </section>
 
 <!-- ===== متابعة التقدّم ===== -->
-<section>
+<section data-tab="health">
   <h2>📈 متابعة التقدّم</h2>
   <?php
     $wSeries = ['label'=>'الوزن (kg)','color'=>'#2563eb','points'=>array_map(fn($r)=>[$r['record_date'],$r['weight']],$prog)];
@@ -1406,7 +1410,7 @@ $hasIntel = $weeklyVolume || $loadIntel;
 </section>
 
 <!-- ===== الحضور اليومي ===== -->
-<section>
+<section data-tab="followup">
   <h2>📅 الحضور اليومي (يشغّل أتمتة المتابعة)</h2>
   <?php if (!$att): ?><div class="empty">لا توجد سجلّات حضور بعد.</div><?php else: ?>
     <table><tr><th>التاريخ</th><th>الحالة</th><th>دخول</th><th>خروج</th><th>النوع</th><th>ملاحظات</th></tr>
@@ -1435,7 +1439,7 @@ $hasIntel = $weeklyVolume || $loadIntel;
 
 <div class="grid2">
   <!-- ===== الرسائل ===== -->
-  <section>
+  <section data-tab="followup">
     <h2>💬 سجلّ الرسائل</h2>
     <?php if (!$msgs): ?><div class="empty">لا توجد رسائل بعد.</div><?php else: ?>
       <table><tr><th>التاريخ</th><th>القناة</th><th>النوع</th><th>المحتوى</th><th>الحالة</th></tr>
@@ -1459,7 +1463,7 @@ $hasIntel = $weeklyVolume || $loadIntel;
   </section>
 
   <!-- ===== الإنجازات ===== -->
-  <section>
+  <section data-tab="followup">
     <h2>🏆 الإنجازات</h2>
     <?php if (!$miles): ?><div class="empty">لا توجد إنجازات بعد.</div><?php else: ?>
       <table><tr><th>التاريخ</th><th>النوع</th><th>الوصف</th><th>المكافأة</th></tr>
