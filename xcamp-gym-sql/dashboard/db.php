@@ -68,6 +68,14 @@ function is_manager(): bool {
     return $u && in_array($u['role'], ['admin','manager','reception'], true);
 }
 
+// ---- مصادقة العضو (بوابة العضو — منفصلة عن الموظّفين) ----
+function current_member(): ?array { return $_SESSION['member'] ?? null; }
+function require_member(): array {
+    $m = current_member();
+    if (!$m) { header('Location: member_login.php'); exit; }
+    return $m;
+}
+
 // ---- حماية CSRF ----
 function csrf_token(): string {
     if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(32));
@@ -92,6 +100,37 @@ function page_head(string $title, string $active = ''): void {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><?=h($title)?> — Xcamp Gym</title>
+<?php page_styles(); ?>
+</head>
+<body>
+<header>
+  <span class="brand">🏋️ Xcamp Gym</span>
+  <?php if ($u): ?>
+  <button class="nav-toggle" type="button" aria-label="القائمة">☰</button>
+  <nav>
+    <?php if (is_manager()): ?><a href="index.php" class="<?= $active==='dash' ? 'active' : '' ?>">لوحة الإدارة</a><?php endif; ?>
+    <a href="captains.php" class="<?= $active==='captains' ? 'active' : '' ?>">واجهة الكباتن</a>
+    <a href="crm.php" class="<?= $active==='crm' ? 'active' : '' ?>">CRM</a>
+    <a href="retention.php" class="<?= $active==='retention' ? 'active' : '' ?>">الاحتفاظ</a>
+    <a href="revenue.php" class="<?= $active==='revenue' ? 'active' : '' ?>">الإيرادات</a>
+    <a href="calendar.php" class="<?= $active==='calendar' ? 'active' : '' ?>">التقويم</a>
+    <a href="templates.php" class="<?= $active==='templates' ? 'active' : '' ?>">التمارين والقوالب</a>
+  </nav>
+  <span class="sub">
+    👤 <?=h($u['name'])?> (<?=h($u['role'])?>)
+    · <a href="account.php" style="color:#93c5fd">حسابي</a>
+    · <a href="logout.php">خروج</a>
+    · <span style="color:#475569">قاعدة: <?=h($db)?></span>
+  </span>
+  <?php endif; ?>
+</header>
+<main>
+<?php
+}
+
+/** كتلة الأنماط المشتركة (تُستخدم في رأس الموظّفين ورأس العضو) */
+function page_styles(): void {
+    ?>
 <style>
   * { box-sizing: border-box; }
   html, body { overflow-x: hidden; }
@@ -161,28 +200,26 @@ function page_head(string $title, string $active = ''): void {
     form.frm { grid-template-columns:1fr 1fr; }
   }
 </style>
+<?php
+}
+
+/** رأس بوابة العضو: نفس التنسيق لكن ترويسة موجّهة للعضو (لا نظهر أدوات الموظّفين) */
+function portal_head(string $title): void {
+    $m = current_member();
+    ?><!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title><?=h($title)?> — Xcamp Gym</title>
+<?php page_styles(); ?>
 </head>
 <body>
 <header>
   <span class="brand">🏋️ Xcamp Gym</span>
-  <?php if ($u): ?>
-  <button class="nav-toggle" type="button" aria-label="القائمة">☰</button>
-  <nav>
-    <?php if (is_manager()): ?><a href="index.php" class="<?= $active==='dash' ? 'active' : '' ?>">لوحة الإدارة</a><?php endif; ?>
-    <a href="captains.php" class="<?= $active==='captains' ? 'active' : '' ?>">واجهة الكباتن</a>
-    <a href="crm.php" class="<?= $active==='crm' ? 'active' : '' ?>">CRM</a>
-    <a href="retention.php" class="<?= $active==='retention' ? 'active' : '' ?>">الاحتفاظ</a>
-    <a href="revenue.php" class="<?= $active==='revenue' ? 'active' : '' ?>">الإيرادات</a>
-    <a href="calendar.php" class="<?= $active==='calendar' ? 'active' : '' ?>">التقويم</a>
-    <a href="templates.php" class="<?= $active==='templates' ? 'active' : '' ?>">التمارين والقوالب</a>
-  </nav>
-  <span class="sub">
-    👤 <?=h($u['name'])?> (<?=h($u['role'])?>)
-    · <a href="account.php" style="color:#93c5fd">حسابي</a>
-    · <a href="logout.php">خروج</a>
-    · <span style="color:#475569">قاعدة: <?=h($db)?></span>
+  <span class="sub" style="margin-inline-start:auto">
+    👤 <?=h($m['name'] ?? '')?> · <a href="member_logout.php">خروج</a>
   </span>
-  <?php endif; ?>
 </header>
 <main>
 <?php
