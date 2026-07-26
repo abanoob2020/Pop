@@ -407,3 +407,38 @@ function churn_band(?float $riskScore): array {
     if ($riskScore >= 40) return ['متوسط', '#eab308'];
     return ['منخفض', '#16a34a'];
 }
+
+// =============================================================================
+// التجديدات والإيرادات المتوقّعة (بقواعد): MRR + احتمال التجديد + المتحصّلات
+// =============================================================================
+
+/** تطبيع سعر الخطة إلى قيمة شهرية (MRR) حسب مدّتها بالأيام */
+function monthlyize(float $price, int $durationDays): float {
+    if ($durationDays <= 0) return round($price, 0);
+    return round($price / $durationDays * 30, 0);
+}
+
+/**
+ * احتمال التجديد (0–1) لتقدير الإيراد المتوقّع، من حالة التجديد + الدفع +
+ * التجديد التلقائي + الأيام المتبقّية. مُجدَّد=1، ملغى=0، والباقي بقواعد.
+ */
+function renewal_likelihood(string $renewalStatus, string $paymentStatus, bool $autoRenew, int $daysLeft): float {
+    if ($renewalStatus === 'renewed')   return 1.0;
+    if ($renewalStatus === 'cancelled') return 0.0;
+    $base   = $autoRenew ? 0.85 : 0.50;
+    $payAdj = ['paid' => 0.10, 'partial' => 0.0, 'unpaid' => -0.15, 'failed' => -0.35, 'refunded' => -0.40][$paymentStatus] ?? 0.0;
+    if ($renewalStatus === 'expired' || $daysLeft < 0) $base -= 0.25;   // المنتهي أقل احتمالًا
+    return max(0.0, min(1.0, $base + $payAdj));
+}
+
+/** المبلغ المتبقّي (غير المُحصَّل) من قيمة اشتراك حسب حالة الدفع */
+function payment_outstanding(float $price, string $paymentStatus): float {
+    if ($paymentStatus === 'unpaid' || $paymentStatus === 'failed') return round($price, 0);
+    if ($paymentStatus === 'partial') return round($price * 0.5, 0);
+    return 0.0;   // paid / refunded
+}
+
+/** تنسيق مبلغ بالجنيه المصري بفواصل آلاف */
+function money(float $v): string {
+    return number_format($v, 0) . ' ج.م';
+}
