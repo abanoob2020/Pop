@@ -442,3 +442,19 @@ function payment_outstanding(float $price, string $paymentStatus): float {
 function money(float $v): string {
     return number_format($v, 0) . ' ج.م';
 }
+
+// =============================================================================
+// المحاسبة ونقطة البيع (بقواعد)
+// =============================================================================
+
+/** إجمالي سلّة البيع من بنودها [['qty'=>int,'unit_price'=>float], ...] */
+function pos_cart_total(array $lines): float {
+    $t = 0.0;
+    foreach ($lines as $l) $t += max(0, (int)($l['qty'] ?? 0)) * (float)($l['unit_price'] ?? 0);
+    return round($t, 2);
+}
+
+/** صافي الربح = الدخل − المصروفات */
+function net_profit(float $income, float $expenses): float {
+    return round($income - $expenses, 2);
+}

@@ -23,6 +23,7 @@ FILES=(
   "08_workout_v2.sql"
   "09_nutrition_v2.sql"
   "10_member_portal.sql"
+  "11_finance_pos.sql"
   "07_test_queries.sql"
 )
 
