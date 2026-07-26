@@ -13,6 +13,7 @@ SET @seeding = NULL;
 SOURCE sql/08_workout_v2.sql;
 SOURCE sql/09_nutrition_v2.sql;
 SOURCE sql/10_member_portal.sql;
+SOURCE sql/11_finance_pos.sql;
 SOURCE sql/07_test_queries.sql;
 
 -- Restore the session state saved in 00_init.sql (valid here because run_all
