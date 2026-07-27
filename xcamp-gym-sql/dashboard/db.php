@@ -130,6 +130,7 @@ function page_head(string $title, string $active = ''): void {
     <a href="revenue.php" class="<?= $active==='revenue' ? 'active' : '' ?>">الإيرادات</a>
     <?php if (is_manager()): ?><a href="finance.php" class="<?= $active==='finance' ? 'active' : '' ?>">المحاسبة</a><?php endif; ?>
     <?php if (is_manager()): ?><a href="analytics.php" class="<?= $active==='analytics' ? 'active' : '' ?>">التحليلات</a><?php endif; ?>
+    <?php if (is_manager()): ?><a href="hr.php" class="<?= $active==='hr' ? 'active' : '' ?>">شؤون الكباتن</a><?php endif; ?>
     <a href="calendar.php" class="<?= $active==='calendar' ? 'active' : '' ?>">التقويم</a>
     <a href="templates.php" class="<?= $active==='templates' ? 'active' : '' ?>">التمارين والقوالب</a>
   </nav>
