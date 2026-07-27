@@ -24,6 +24,7 @@ FILES=(
   "09_nutrition_v2.sql"
   "10_member_portal.sql"
   "11_finance_pos.sql"
+  "12_checkin_qr.sql"
   "07_test_queries.sql"
 )
 
