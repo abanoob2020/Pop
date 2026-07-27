@@ -4,6 +4,7 @@
 // يضيف قياساته، ويطلب التجديد. كل شيء مقصور على بيانات العضو نفسه (من الجلسة).
 // =============================================================================
 require __DIR__ . '/db.php';
+require_once __DIR__ . '/qr.php';
 $member = require_member();
 $meId   = (int)$member['member_id'];
 
@@ -171,6 +172,11 @@ $payColor = ['paid'=>'#16a34a','partial'=>'#f59e0b','unpaid'=>'#dc2626','failed'
       · <a class="link" href="portal.php?sid=<?=(int)$next['session_id']?>#prog">افتحها وسجّل أداءك ←</a>
     </div>
   <?php endif; ?>
+  <div style="border:1px solid #eef2f7;border-radius:12px;padding:16px;margin-top:8px;text-align:center;max-width:280px">
+    <strong style="font-size:14px;color:#334155">🎫 رمز دخولك</strong>
+    <div style="margin:10px auto;width:180px"><?= qr_svg(member_qr_token($pdo, $meId), 5) ?></div>
+    <p class="muted" style="font-size:12px;margin:0">اعرض هذا الرمز عند الاستقبال لتسجيل حضورك.</p>
+  </div>
   <?php if ($mile): ?>
     <h3>🏆 إنجازاتك</h3>
     <div style="display:flex;gap:8px;flex-wrap:wrap">

@@ -68,6 +68,20 @@ function is_manager(): bool {
     return $u && in_array($u['role'], ['admin','manager','reception'], true);
 }
 
+/** رمز دخول العضو للـ QR — يُنشأ عند أول طلب ويُخزَّن (16 حرفًا، يتجنّب حدود سعة QR) */
+function member_qr_token(PDO $pdo, int $memberId): string {
+    $q = $pdo->prepare("SELECT token FROM member_qr WHERE member_id = ?");
+    $q->execute([$memberId]);
+    $tok = $q->fetchColumn();
+    if ($tok !== false) return $tok;
+    $tok = 'XCG-' . bin2hex(random_bytes(6));   // 4 + 12 = 16 حرفًا
+    $pdo->prepare("INSERT INTO member_qr (member_id, token) VALUES (?,?)
+                   ON DUPLICATE KEY UPDATE token = token")->execute([$memberId, $tok]);
+    // في حال تسابق نادر أعِد القراءة
+    $q->execute([$memberId]);
+    return $q->fetchColumn() ?: $tok;
+}
+
 // ---- مصادقة العضو (بوابة العضو — منفصلة عن الموظّفين) ----
 function current_member(): ?array { return $_SESSION['member'] ?? null; }
 function require_member(): array {
@@ -110,6 +124,7 @@ function page_head(string $title, string $active = ''): void {
   <nav>
     <?php if (is_manager()): ?><a href="index.php" class="<?= $active==='dash' ? 'active' : '' ?>">لوحة الإدارة</a><?php endif; ?>
     <a href="captains.php" class="<?= $active==='captains' ? 'active' : '' ?>">واجهة الكباتن</a>
+    <a href="checkin.php" class="<?= $active==='checkin' ? 'active' : '' ?>">الحضور (QR)</a>
     <a href="crm.php" class="<?= $active==='crm' ? 'active' : '' ?>">CRM</a>
     <a href="retention.php" class="<?= $active==='retention' ? 'active' : '' ?>">الاحتفاظ</a>
     <a href="revenue.php" class="<?= $active==='revenue' ? 'active' : '' ?>">الإيرادات</a>
