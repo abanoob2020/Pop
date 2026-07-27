@@ -66,12 +66,32 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
                            VALUES (?,?,?,?,?,?,?)")
                 ->execute([$meId, $_POST['record_date'] ?: date('Y-m-d'), $num('weight'), $num('body_fat'),
                            $num('muscle_mass'), $num('waist'), trim($_POST['performance_note'] ?? '') ?: null]);
+        } elseif ($act === 'member_book_pt') {
+            if (!$myCoach) throw new RuntimeException('لا كابتن مُسنَد لك بعد — تواصل مع الاستقبال.');
+            $date = $_POST['session_date'] ?? '';
+            $start = $_POST['start_time'] ?? '';
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) || $date < date('Y-m-d'))
+                throw new RuntimeException('اختر تاريخًا اليوم أو لاحقًا.');
+            // تأكيد أن الموعد متاح فعلًا ضمن ورديات الكابتن وغير محجوز
+            $ok = false; $endT = null; $want = strlen($start) === 5 ? $start . ':00' : $start;
+            foreach (pt_slots_for($pdo, (int)$myCoach, $date) as $s)
+                if ($s['start'] === $want && $s['free']) { $ok = true; $endT = $s['end']; break; }
+            if (!$ok) throw new RuntimeException('الموعد لم يعد متاحًا — اختر موعدًا آخر.');
+            $pdo->prepare("INSERT INTO pt_sessions (member_id, coach_id, session_date, start_time, end_time, status, booked_by, price)
+                           VALUES (?,?,?,?,?, 'booked', 'member', ?)")
+                ->execute([$meId, (int)$myCoach, $date, $want, $endT, PT_PRICE]);
+        } elseif ($act === 'member_cancel_pt') {
+            // العضو يلغي جلسته المحجوزة المستقبلية فقط
+            $pdo->prepare("UPDATE pt_sessions SET status='cancelled'
+                           WHERE pt_id = ? AND member_id = ? AND status='booked' AND session_date >= CURDATE()")
+                ->execute([(int)$_POST['pt_id'], $meId]);
         } elseif ($act === 'member_request_renewal') {
             $pdo->prepare("INSERT INTO tasks (member_id, coach_id, task_type, priority, status, due_at, notes)
                            VALUES (?,?,'renewal','high','open', DATE_ADD(NOW(), INTERVAL 3 DAY), 'طلب تجديد من العضو عبر البوابة')")
                 ->execute([$meId, $myCoach]);
         }
-        header('Location: portal.php?ok=1');
+        $ret = isset($_POST['ret_date']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $_POST['ret_date']) ? '&ptd=' . urlencode($_POST['ret_date']) : '';
+        header('Location: portal.php?ok=1' . $ret);
         exit;
     } catch (Throwable $e) {
         $error = 'تعذّر الحفظ: ' . $e->getMessage();
@@ -144,6 +164,23 @@ $prog->execute([$meId]); $prog = $prog->fetchAll();
 $mile = $pdo->prepare("SELECT * FROM milestones WHERE member_id = ? ORDER BY milestone_date DESC, milestone_id DESC LIMIT 8");
 $mile->execute([$meId]); $mile = $mile->fetchAll();
 
+// جلسات PT: اسم الكابتن + مواعيد اليوم المختار + جلسات العضو
+$ptCoachName = null;
+if ($myCoach) { $cn = $pdo->prepare("SELECT full_name FROM coaches WHERE coach_id = ?"); $cn->execute([(int)$myCoach]); $ptCoachName = $cn->fetchColumn() ?: null; }
+$ptSelDate = $_GET['ptd'] ?? '';
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$ptSelDate)) $ptSelDate = '';
+$ptSlots = []; $ptSlotErr = null;
+if ($myCoach && $ptSelDate) {
+    if ($ptSelDate < date('Y-m-d')) $ptSlotErr = 'اختر تاريخًا اليوم أو لاحقًا.';
+    else { $ptSlots = pt_slots_for($pdo, (int)$myCoach, $ptSelDate);
+           if (!$ptSlots) $ptSlotErr = 'لا مواعيد متاحة لكابتنك في هذا اليوم — جرّب يومًا آخر.'; }
+}
+$myPt = $pdo->prepare("SELECT pt.*, c.full_name cname FROM pt_sessions pt JOIN coaches c ON c.coach_id=pt.coach_id
+                       WHERE pt.member_id = ? ORDER BY (pt.status='booked' AND pt.session_date>=CURDATE()) DESC, pt.session_date DESC, pt.start_time DESC LIMIT 20");
+$myPt->execute([$meId]); $myPt = $myPt->fetchAll();
+$ptStMeta = ['booked'=>['محجوز','#2563eb'],'completed'=>['مكتملة','#16a34a'],'cancelled'=>['ملغاة','#6b7280'],'no_show'=>['تخلّف','#dc2626']];
+$hm = fn($t) => substr((string)$t, 0, 5);
+
 $stColor = ['planned'=>'#2563eb','completed'=>'#16a34a','partial'=>'#f59e0b','missed'=>'#dc2626'];
 $payColor = ['paid'=>'#16a34a','partial'=>'#f59e0b','unpaid'=>'#dc2626','failed'=>'#dc2626','refunded'=>'#6b7280'];
 ?>
@@ -154,6 +191,7 @@ $payColor = ['paid'=>'#16a34a','partial'=>'#f59e0b','unpaid'=>'#dc2626','failed'
   <button type="button" data-tabtarget="prog">🏋️ برنامجي</button>
   <button type="button" data-tabtarget="nutr">🥗 تغذيتي</button>
   <button type="button" data-tabtarget="track">📈 تقدّمي</button>
+  <button type="button" data-tabtarget="pt">🏋️‍♂️ جلسات PT</button>
   <button type="button" data-tabtarget="sub">🎫 اشتراكي</button>
 </nav>
 
@@ -286,6 +324,65 @@ $payColor = ['paid'=>'#16a34a','partial'=>'#f59e0b','unpaid'=>'#dc2626','failed'
     <div style="grid-column:1/-1"><label>ملاحظة</label><input name="performance_note"></div>
     <div><button type="submit">حفظ القياس</button></div>
   </form>
+</section>
+
+<!-- ===== جلسات PT ===== -->
+<section data-tab="pt">
+  <h2>🏋️‍♂️ جلسات التدريب الشخصي</h2>
+  <?php if (!$myCoach): ?>
+    <div class="empty">لا كابتن مُسنَد لك بعد — تواصل مع الاستقبال لحجز جلسة شخصية.</div>
+  <?php else: ?>
+    <p class="muted" style="font-size:13px;margin-top:0">كابتنك: <strong><?=h($ptCoachName)?></strong> · سعر الجلسة <?=money(PT_PRICE)?></p>
+    <h3>📆 احجز موعدًا</h3>
+    <form method="get" data-no-ajax class="frm" style="align-items:end">
+      <div><label>اختر اليوم</label><input type="date" name="ptd" value="<?=h($ptSelDate ?: date('Y-m-d'))?>" min="<?=date('Y-m-d')?>" required></div>
+      <div><button type="submit">🔎 اعرض المواعيد</button></div>
+    </form>
+    <?php if ($ptSelDate): ?>
+      <?php if ($ptSlotErr): ?>
+        <div class="err" style="margin-top:10px"><?=h($ptSlotErr)?></div>
+      <?php else: ?>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin:10px 0">
+          <?php foreach ($ptSlots as $s): ?>
+            <?php if ($s['free']): ?>
+              <form method="post" style="margin:0"><?=csrf_field()?>
+                <input type="hidden" name="action" value="member_book_pt">
+                <input type="hidden" name="session_date" value="<?=h($ptSelDate)?>">
+                <input type="hidden" name="start_time" value="<?=h($s['start'])?>">
+                <input type="hidden" name="ret_date" value="<?=h($ptSelDate)?>">
+                <button type="submit" onclick="return confirm('حجز موعد <?=$hm($s['start'])?> يوم <?=h($ptSelDate)?>؟')" style="background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe;border-radius:8px;padding:9px 14px;font-weight:700;cursor:pointer"><?=trange($s['start'],$s['end'])?></button>
+              </form>
+            <?php else: ?>
+              <span style="background:#f1f5f9;color:#94a3b8;border:1px solid #e2e8f0;border-radius:8px;padding:9px 14px;text-decoration:line-through"><?=trange($s['start'],$s['end'])?></span>
+            <?php endif; ?>
+          <?php endforeach; ?>
+        </div>
+      <?php endif; ?>
+    <?php endif; ?>
+    <h3>🗓️ جلساتي</h3>
+    <?php if (!$myPt): ?><div class="empty">لا جلسات بعد — احجز أول جلسة بالأعلى.</div><?php else: ?>
+    <table>
+      <tr><th>التاريخ</th><th>الوقت</th><th>الكابتن</th><th>الحالة</th><th></th></tr>
+      <?php foreach ($myPt as $r): [$lbl,$col] = $ptStMeta[$r['status']];
+        $future = $r['status']==='booked' && $r['session_date'] >= date('Y-m-d'); ?>
+        <tr>
+          <td><?=h($r['session_date'])?></td>
+          <td><?=trange($r['start_time'],$r['end_time'])?></td>
+          <td class="muted"><?=h($r['cname'])?></td>
+          <td><span class="badge" style="background:<?=$col?>"><?=$lbl?></span></td>
+          <td>
+            <?php if ($future): ?>
+              <form method="post" style="margin:0" onsubmit="return confirm('إلغاء هذه الجلسة؟')"><?=csrf_field()?>
+                <input type="hidden" name="action" value="member_cancel_pt"><input type="hidden" name="pt_id" value="<?=(int)$r['pt_id']?>">
+                <button type="submit" style="background:none;border:1px solid #fecaca;color:#dc2626;border-radius:6px;padding:3px 10px;font-size:11px;cursor:pointer">إلغاء</button>
+              </form>
+            <?php endif; ?>
+          </td>
+        </tr>
+      <?php endforeach; ?>
+    </table>
+    <?php endif; ?>
+  <?php endif; ?>
 </section>
 
 <!-- ===== اشتراكي ===== -->

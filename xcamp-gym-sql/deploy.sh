@@ -26,6 +26,7 @@ FILES=(
   "11_finance_pos.sql"
   "12_checkin_qr.sql"
   "13_coach_hr.sql"
+  "14_pt_sessions.sql"
   "07_test_queries.sql"
 )
 
