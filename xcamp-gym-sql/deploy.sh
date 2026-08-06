@@ -28,6 +28,7 @@ FILES=(
   "13_coach_hr.sql"
   "14_pt_sessions.sql"
   "15_referrals.sql"
+  "16_assessments.sql"
   "07_test_queries.sql"
 )
 
