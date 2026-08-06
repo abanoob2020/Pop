@@ -181,6 +181,12 @@ $myPt->execute([$meId]); $myPt = $myPt->fetchAll();
 $ptStMeta = ['booked'=>['محجوز','#2563eb'],'completed'=>['مكتملة','#16a34a'],'cancelled'=>['ملغاة','#6b7280'],'no_show'=>['تخلّف','#dc2626']];
 $hm = fn($t) => substr((string)$t, 0, 5);
 
+// كود الإحالة الخاص بالعضو + أثره
+$myRef = $pdo->prepare("SELECT * FROM discount_codes WHERE owner_member_id = ? LIMIT 1");
+$myRef->execute([$meId]); $myRef = $myRef->fetch();
+$refUses = $myRef ? (int)$myRef['used_count'] : 0;
+$refReward = $myRef ? $refUses * (float)$myRef['reward_value'] : 0.0;
+
 $stColor = ['planned'=>'#2563eb','completed'=>'#16a34a','partial'=>'#f59e0b','missed'=>'#dc2626'];
 $payColor = ['paid'=>'#16a34a','partial'=>'#f59e0b','unpaid'=>'#dc2626','failed'=>'#dc2626','refunded'=>'#6b7280'];
 ?>
@@ -192,6 +198,7 @@ $payColor = ['paid'=>'#16a34a','partial'=>'#f59e0b','unpaid'=>'#dc2626','failed'
   <button type="button" data-tabtarget="nutr">🥗 تغذيتي</button>
   <button type="button" data-tabtarget="track">📈 تقدّمي</button>
   <button type="button" data-tabtarget="pt">🏋️‍♂️ جلسات PT</button>
+  <button type="button" data-tabtarget="ref">🤝 إحالاتي</button>
   <button type="button" data-tabtarget="sub">🎫 اشتراكي</button>
 </nav>
 
@@ -382,6 +389,29 @@ $payColor = ['paid'=>'#16a34a','partial'=>'#f59e0b','unpaid'=>'#dc2626','failed'
       <?php endforeach; ?>
     </table>
     <?php endif; ?>
+  <?php endif; ?>
+</section>
+
+<!-- ===== إحالاتي ===== -->
+<section data-tab="ref">
+  <h2>🤝 إحالاتي</h2>
+  <?php if (!$myRef): ?>
+    <div class="empty">لا كود إحالة بعد — تواصل مع الاستقبال.</div>
+  <?php else:
+    $rv = rtrim(rtrim(number_format((float)$myRef['value'],2),'0'),'.'); ?>
+    <p class="muted" style="font-size:13px;margin-top:0">شارك كودك مع أصدقائك: يحصلون على خصم <?= $myRef['kind']==='percent' ? $rv.'%' : money((float)$myRef['value']) ?> عند الاشتراك، وتكسب أنت <?=money((float)$myRef['reward_value'])?> عن كل صديق يستخدمه.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:stretch;margin-bottom:8px">
+      <div style="flex:1;min-width:220px;border:2px dashed #7c3aed;border-radius:14px;padding:18px;text-align:center;background:#faf5ff">
+        <div class="muted" style="font-size:12px">كود الإحالة</div>
+        <div style="font-family:monospace;font-size:26px;font-weight:800;color:#6b21a8;letter-spacing:1px;margin:6px 0"><?=h($myRef['code'])?></div>
+        <button type="button" onclick="navigator.clipboard&&navigator.clipboard.writeText('<?=h($myRef['code'])?>').then(()=>{this.textContent='✓ تم النسخ'})" style="background:#7c3aed;color:#fff;border:0;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">📋 انسخ الكود</button>
+      </div>
+      <div class="kpis" style="flex:2;min-width:220px;margin:0">
+        <div class="card" style="--c:#16a34a"><div class="n"><?=$refUses?></div><div class="l">أصدقاء استخدموا كودك</div></div>
+        <div class="card" style="--c:#7c3aed"><div class="n" style="font-size:22px"><?=money($refReward)?></div><div class="l">إجمالي مكافآتك</div></div>
+      </div>
+    </div>
+    <p class="muted" style="font-size:12px">تُطبَّق مكافآتك رصيدًا لدى الاستقبال. الكود صالح على الاشتراكات ومبيعات المتجر.</p>
   <?php endif; ?>
 </section>
 
