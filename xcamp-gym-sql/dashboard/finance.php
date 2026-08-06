@@ -33,11 +33,20 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $lines[] = ['product_id' => (int)$p['product_id'], 'name' => $p['name'], 'qty' => $q, 'unit_price' => (float)$p['price']];
             }
             if (!$lines) throw new RuntimeException('اختر منتجًا واحدًا على الأقل.');
-            $total = pos_cart_total($lines);
+            $gross = pos_cart_total($lines);
+            // كود خصم اختياري (سياق: نقطة بيع)
+            $promo = strtoupper(trim($_POST['promo'] ?? ''));
+            $promoRow = null; $discount = 0.0; $total = $gross;
+            if ($promo !== '') {
+                $ev = discount_evaluate($pdo, $promo, $gross, 'pos');
+                if (!$ev['ok']) throw new RuntimeException('كود الخصم: ' . $ev['msg']);
+                $promoRow = $ev['row']; $discount = $ev['discount']; $total = $ev['final'];
+            }
             $pdo->beginTransaction();
             $pdo->prepare("INSERT INTO pos_sales (member_id, cashier_user_id, total, method) VALUES (?,?,?,?)")
                 ->execute([$memberId, $uid, $total, $method]);
             $saleId = (int)$pdo->lastInsertId();
+            if ($promoRow) discount_redeem($pdo, $promoRow, 'pos', $gross, $discount, $memberId);
             $insItem = $pdo->prepare("INSERT INTO pos_sale_items (sale_id, product_id, product_name, qty, unit_price) VALUES (?,?,?,?,?)");
             $decr    = $pdo->prepare("UPDATE products SET stock_qty = stock_qty - ? WHERE product_id = ?");
             foreach ($lines as $l) {
@@ -67,12 +76,22 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $method = in_array($_POST['method'] ?? '', $METHODS, true) ? $_POST['method'] : 'cash';
             $amount = max(0, (float)$_POST['amount']);
             if ($amount <= 0) throw new RuntimeException('أدخل مبلغًا صحيحًا.');
+            // كود خصم اختياري (سياق: اشتراكات)
+            $promo = strtoupper(trim($_POST['promo'] ?? ''));
+            $promoRow = null; $discount = 0.0; $payAmount = $amount; $note = 'دفعة اشتراك عبر المحاسبة';
+            if ($promo !== '') {
+                $ev = discount_evaluate($pdo, $promo, $amount, 'membership');
+                if (!$ev['ok']) throw new RuntimeException('كود الخصم: ' . $ev['msg']);
+                $promoRow = $ev['row']; $discount = $ev['discount']; $payAmount = $ev['final'];
+                $note .= ' (كود ' . $promoRow['code'] . ' −' . money($discount) . ')';
+            }
             $pdo->beginTransaction();
             // يُسجَّل في جدول payments الأصلي بالمخطط
             $pdo->prepare("INSERT INTO payments (member_id, membership_id, payment_date, amount, method, status, notes)
-                           VALUES (?,?, NOW(), ?, ?, 'paid', 'دفعة اشتراك عبر المحاسبة')")
-                ->execute([(int)$mid, $msid, $amount, $method]);
+                           VALUES (?,?, NOW(), ?, ?, 'paid', ?)")
+                ->execute([(int)$mid, $msid, $payAmount, $method, $note]);
             $pdo->prepare("UPDATE memberships SET payment_status = 'paid' WHERE membership_id = ?")->execute([$msid]);
+            if ($promoRow) discount_redeem($pdo, $promoRow, 'membership', $amount, $discount, (int)$mid);
             $pdo->commit();
         }
         header('Location: finance.php?ok=1');
@@ -172,6 +191,7 @@ $ecatLabel= ['rent'=>'إيجار','salaries'=>'رواتب','equipment'=>'معد�
       </select></div>
       <div><label>المبلغ</label><input id="mpay" type="number" step="0.01" name="amount" value="<?=h($dueMs[0]['price'])?>" required></div>
       <div><label>الطريقة</label><select name="method"><?php foreach ($METHODS as $m): ?><option value="<?=$m?>"><?=h($mLabel[$m])?></option><?php endforeach; ?></select></div>
+      <div><label>كود خصم (اختياري)</label><input name="promo" placeholder="REF-… أو WELCOME10" style="text-transform:uppercase"></div>
       <div><button type="submit">تسجيل الدفعة</button></div>
     </form>
   <?php endif; ?>
@@ -210,6 +230,7 @@ $ecatLabel= ['rent'=>'إيجار','salaries'=>'رواتب','equipment'=>'معد�
       <div><label>العضو (اختياري)</label><select name="member_id"><option value="">— زائر —</option>
         <?php foreach ($members as $m): ?><option value="<?=(int)$m['member_id']?>"><?=h($m['full_name'])?></option><?php endforeach; ?></select></div>
       <div><label>طريقة الدفع</label><select name="method"><?php foreach ($METHODS as $m): ?><option value="<?=$m?>"><?=h($mLabel[$m])?></option><?php endforeach; ?></select></div>
+      <div><label>كود خصم (اختياري)</label><input name="promo" placeholder="REF-… أو WELCOME10" style="text-transform:uppercase"></div>
       <div style="display:flex;align-items:end"><button type="submit" style="background:#16a34a;color:#fff;border:0;padding:10px 18px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;width:100%">💳 إتمام البيع</button></div>
     </div>
     <p class="muted" style="font-size:12px;margin:8px 0 0">حدّد الكميات ثم أتمّ البيع — يُسجَّل الدخل تلقائيًا ويُخصم المخزون.</p>

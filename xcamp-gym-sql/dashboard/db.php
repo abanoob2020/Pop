@@ -133,6 +133,36 @@ function pt_slots_for(PDO $pdo, int $coachId, string $date, int $slotMin = PT_SL
     return $slots;
 }
 
+// ---- أكواد الخصم والإحالة ----
+/**
+ * يتحقّق من كود خصم ويحسب أثره على مبلغ في سياق معيّن دون تعديل قاعدة البيانات.
+ * @return array{ok:bool,msg:?string,row:?array,discount:float,final:float}
+ */
+function discount_evaluate(PDO $pdo, string $code, float $base, string $context): array {
+    $code = strtoupper(trim($code));
+    $out = ['ok' => false, 'msg' => null, 'row' => null, 'discount' => 0.0, 'final' => $base];
+    if ($code === '') { $out['msg'] = 'أدخل كودًا.'; return $out; }
+    $q = $pdo->prepare("SELECT * FROM discount_codes WHERE code = ?");
+    $q->execute([$code]); $row = $q->fetch();
+    if (!$row)                                   { $out['msg'] = 'كود غير موجود.'; return $out; }
+    if (!$row['active'])                         { $out['msg'] = 'الكود موقوف.'; return $out; }
+    if ($row['expires_on'] && $row['expires_on'] < date('Y-m-d')) { $out['msg'] = 'انتهت صلاحية الكود.'; return $out; }
+    if ((int)$row['max_uses'] > 0 && (int)$row['used_count'] >= (int)$row['max_uses']) { $out['msg'] = 'استُنفد الكود.'; return $out; }
+    if ($row['scope'] !== 'both' && $row['scope'] !== $context) { $out['msg'] = 'الكود لا ينطبق هنا.'; return $out; }
+    $disc = $row['kind'] === 'percent' ? round($base * (float)$row['value'] / 100, 2) : (float)$row['value'];
+    $disc = max(0, min($disc, $base));           // لا يتجاوز الخصمُ المبلغَ
+    $out['ok'] = true; $out['row'] = $row; $out['discount'] = $disc; $out['final'] = round($base - $disc, 2);
+    return $out;
+}
+
+/** يسجّل استخدام كود خصم داخل معاملة قائمة: يزيد العدّاد ويكتب سجلّ التدقيق. */
+function discount_redeem(PDO $pdo, array $row, string $context, float $base, float $discount, ?int $memberId): void {
+    $pdo->prepare("UPDATE discount_codes SET used_count = used_count + 1 WHERE code_id = ?")->execute([(int)$row['code_id']]);
+    $pdo->prepare("INSERT INTO discount_redemptions (code_id, code, member_id, context, base_amount, discount_amount, final_amount)
+                   VALUES (?,?,?,?,?,?,?)")
+        ->execute([(int)$row['code_id'], $row['code'], $memberId, $context, $base, $discount, round($base - $discount, 2)]);
+}
+
 // ---- حماية CSRF ----
 function csrf_token(): string {
     if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(32));
@@ -175,6 +205,7 @@ function page_head(string $title, string $active = ''): void {
     <?php if (is_manager()): ?><a href="finance.php" class="<?= $active==='finance' ? 'active' : '' ?>">المحاسبة</a><?php endif; ?>
     <?php if (is_manager()): ?><a href="analytics.php" class="<?= $active==='analytics' ? 'active' : '' ?>">التحليلات</a><?php endif; ?>
     <?php if (is_manager()): ?><a href="hr.php" class="<?= $active==='hr' ? 'active' : '' ?>">شؤون الكباتن</a><?php endif; ?>
+    <?php if (is_manager()): ?><a href="promos.php" class="<?= $active==='promos' ? 'active' : '' ?>">الإحالات والأكواد</a><?php endif; ?>
     <a href="calendar.php" class="<?= $active==='calendar' ? 'active' : '' ?>">التقويم</a>
     <a href="templates.php" class="<?= $active==='templates' ? 'active' : '' ?>">التمارين والقوالب</a>
   </nav>
