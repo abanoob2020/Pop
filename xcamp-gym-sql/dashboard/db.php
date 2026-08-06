@@ -4,7 +4,22 @@
 // إعدادات الاتصال عبر متغيّرات البيئة: DB_HOST DB_PORT DB_NAME DB_USER DB_PASS
 // =============================================================================
 
-if (session_status() === PHP_SESSION_NONE) session_start();
+// جلسة مُقوّاة: HttpOnly دائمًا، SameSite=Lax، وSecure تلقائيًا خلف HTTPS
+// (أو بفرضها عبر SESSION_SECURE=1 عند التشغيل خلف بروكسي TLS).
+if (session_status() === PHP_SESSION_NONE) {
+    $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+          || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https')
+          || ((int)($_SERVER['SERVER_PORT'] ?? 0) === 443);
+    $secure = getenv('SESSION_SECURE') !== false ? getenv('SESSION_SECURE') === '1' : $https;
+    session_set_cookie_params([
+        'lifetime' => 0,
+        'path'     => '/',
+        'httponly' => true,
+        'secure'   => $secure,
+        'samesite' => 'Lax',
+    ]);
+    session_start();
+}
 
 // بدائل آمنة لدوال mbstring في حال عدم تثبيت الامتداد (utf8mb4-aware)
 if (!function_exists('mb_strtolower')) {

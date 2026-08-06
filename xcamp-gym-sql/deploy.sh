@@ -11,7 +11,12 @@ mkdir -p "$LOG_DIR"
 : "${DB_USER:=root}"
 : "${DB_PASS:=}"
 : "${DB_NAME:=xcamp_gym}"
+# DB_SEED=1 (default) loads the demo data + test queries. Set DB_SEED=0 for a
+# clean production database: schema + additive upgrades only, no demo members.
+: "${DB_SEED:=1}"
 
+# Additive upgrade migrations always run; the demo seed and test queries are
+# gated on DB_SEED so a production deploy starts with empty member/staff tables.
 FILES=(
   "00_init.sql"
   "01_tables.sql"
@@ -19,7 +24,11 @@ FILES=(
   "03_triggers.sql"
   "04_events.sql"
   "05_views.sql"
-  "06_seed_data.sql"
+)
+if [[ "$DB_SEED" != "0" ]]; then
+  FILES+=("06_seed_data.sql")
+fi
+FILES+=(
   "08_workout_v2.sql"
   "09_nutrition_v2.sql"
   "10_member_portal.sql"
@@ -29,8 +38,10 @@ FILES=(
   "14_pt_sessions.sql"
   "15_referrals.sql"
   "16_assessments.sql"
-  "07_test_queries.sql"
 )
+if [[ "$DB_SEED" != "0" ]]; then
+  FILES+=("07_test_queries.sql")
+fi
 
 USE_COLOR=0
 if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
@@ -95,7 +106,11 @@ run_sql() {
 
 : > "$LOG_DIR/deploy.log"
 
-log_info "Starting deployment for database: $DB_NAME"
+if [[ "$DB_SEED" == "0" ]]; then
+  log_info "Starting CLEAN deployment (DB_SEED=0, no demo data) for database: $DB_NAME"
+else
+  log_info "Starting deployment (with demo data) for database: $DB_NAME"
+fi
 
 # Verify connectivity and make sure the database exists (00_init.sql also creates
 # it, but the --database connections need it to exist to connect at all).
