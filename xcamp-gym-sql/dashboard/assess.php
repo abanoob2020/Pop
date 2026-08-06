@@ -30,6 +30,17 @@ $LMH    = ['low'=>'منخفض','medium'=>'متوسط','high'=>'مرتفع'];
 $CAFF   = ['none'=>'لا','low'=>'قليل','moderate'=>'متوسط','high'=>'كثير'];
 $ACT    = ['low'=>'منخفض','moderate'=>'متوسط','high'=>'مرتفع'];
 $DOC    = ['na'=>'غير محدَّد','yes'=>'نعم','no'=>'لا'];
+// الطبقة الإكلينيكية
+$FMS = ['deep_squat'=>'قرفصاء عميقة','hurdle_step'=>'خطوة الحاجز','inline_lunge'=>'طعنة على خط',
+        'shoulder_mobility'=>'حركية الكتف','active_slr'=>'رفع الساق النشط','trunk_stability'=>'ثبات الجذع (دفع)',
+        'rotary_stability'=>'ثبات دوراني','single_leg_balance'=>'توازن ساق واحدة','overhead_reach'=>'مدّ علوي',
+        'hip_hinge'=>'مفصلة الورك','thoracic_rotation'=>'دوران صدري'];
+$FMS_SC = [3=>'٣ طبيعي',2=>'٢ تعويض',1=>'١ عاجز',0=>'٠ ألم'];
+$POST = ['forward_head'=>'رأس أمامي','rounded_shoulders'=>'كتف مدوّر','kyphosis'=>'تحدّب صدري','lordosis'=>'تقعّر قطني',
+         'anterior_pelvic_tilt'=>'ميل حوضي أمامي','posterior_pelvic_tilt'=>'ميل حوضي خلفي','knee_valgus'=>'ركبة للداخل',
+         'knee_varus'=>'ركبة للخارج','scapular_winging'=>'جناحية اللوح','leg_length'=>'فرق طول الساقين','foot_arch'=>'قوس القدم'];
+$REG = ['chest'=>'الصدر','upper_back'=>'الظهر العلوي','lower_back'=>'أسفل الظهر','shoulders'=>'الأكتاف','biceps'=>'البايسبس',
+        'triceps'=>'الترايسبس','glutes'=>'الأرداف','hamstrings'=>'أوتار الركبة','quads'=>'الأمامية','calves'=>'السمانة'];
 
 /** يتأكّد أن العضو ضمن صلاحية المستخدم (المدير: الكل؛ الكابتن: أعضاؤه). */
 function asm_member_allowed(PDO $pdo, bool $isCoach, int $coachId, int $memberId): bool {
@@ -97,6 +108,24 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $l = ($_POST['m_l'][$s] ?? '') !== '' ? (float)$_POST['m_l'][$s] : null;
                 if ($r !== null || $l !== null) $insM->execute([$aid, $s, $r, $l]);
             }
+            // FMS (استبدال كامل — تُكتب الحركات ذات الدرجة المُدخَلة)
+            $pdo->prepare("DELETE FROM assessment_fms WHERE assessment_id = ?")->execute([$aid]);
+            $insF = $pdo->prepare("INSERT INTO assessment_fms (assessment_id, movement, score) VALUES (?,?,?)");
+            foreach (array_keys($FMS) as $mv) {
+                $s = $_POST['fms'][$mv] ?? '';
+                if ($s !== '' && $s >= 0 && $s <= 3) $insF->execute([$aid, $mv, (int)$s]);
+            }
+            // القوام (الانحرافات المُعلَّمة فقط)
+            $pdo->prepare("DELETE FROM assessment_posture WHERE assessment_id = ?")->execute([$aid]);
+            $insP2 = $pdo->prepare("INSERT INTO assessment_posture (assessment_id, finding, present) VALUES (?,?,1)");
+            foreach (array_keys($POST) as $f) if (isset($_POST['post'][$f])) $insP2->execute([$aid, $f]);
+            // الاختلالات (المناطق ذات علامة ضعف/شدّ فقط)
+            $pdo->prepare("DELETE FROM assessment_imbalances WHERE assessment_id = ?")->execute([$aid]);
+            $insI = $pdo->prepare("INSERT INTO assessment_imbalances (assessment_id, region, weak, tight) VALUES (?,?,?,?)");
+            foreach (array_keys($REG) as $rg) {
+                $w = isset($_POST['weak'][$rg]) ? 1 : 0; $t = isset($_POST['tight'][$rg]) ? 1 : 0;
+                if ($w || $t) $insI->execute([$aid, $rg, $w, $t]);
+            }
             $pdo->commit();
             header('Location: assess.php?a=' . $aid . '&ok=1');
             exit;
@@ -126,6 +155,20 @@ if ($openId) {
         foreach ($p as $r) $parqMap[$r['item']] = (int)$r['answer'];
         $mm = $pdo->prepare("SELECT * FROM assessment_measurements WHERE assessment_id = ?"); $mm->execute([$openId]);
         foreach ($mm as $r) $measMap[$r['site']] = $r;
+    }
+}
+// الطبقة الإكلينيكية للتحرير + التوصيات
+$fmsMap = []; $postMap = []; $imbMap = []; $reco = null;
+if ($A) {
+    $f = $pdo->prepare("SELECT movement, score FROM assessment_fms WHERE assessment_id = ?"); $f->execute([$openId]);
+    foreach ($f as $r) $fmsMap[$r['movement']] = (int)$r['score'];
+    $ps = $pdo->prepare("SELECT finding FROM assessment_posture WHERE assessment_id = ? AND present = 1"); $ps->execute([$openId]);
+    foreach ($ps as $r) $postMap[$r['finding']] = 1;
+    $im = $pdo->prepare("SELECT region, weak, tight FROM assessment_imbalances WHERE assessment_id = ?"); $im->execute([$openId]);
+    foreach ($im as $r) $imbMap[$r['region']] = ['weak' => (int)$r['weak'], 'tight' => (int)$r['tight']];
+    // توصيات آلية (تظهر إن وُجدت مدخلات إكلينيكية)
+    if ($fmsMap || $postMap || $imbMap) {
+        $reco = assessment_clinical_reco($fmsMap, $postMap, $imbMap, (bool)($parqMap['joint_back_pain'] ?? 0), $A['goal_primary']);
     }
 }
 // عضو جديد محدَّد
@@ -206,7 +249,34 @@ $sel = fn($k, $v) => ($A !== null && ($A[$k] ?? '') === $v) ? 'selected' : '';
     <button type="button" data-tabtarget="life">🌙 نمط الحياة</button>
     <button type="button" data-tabtarget="body">⚖️ تركيب الجسم</button>
     <button type="button" data-tabtarget="meas">📏 المحيطات</button>
+    <button type="button" data-tabtarget="fms">🤸 FMS</button>
+    <button type="button" data-tabtarget="posture">🧍 القوام</button>
+    <button type="button" data-tabtarget="imbalance">⚠️ الاختلالات</button>
   </nav>
+
+  <?php if ($reco): ?>
+  <div style="background:linear-gradient(180deg,#faf5ff,#fff);border:1px solid #e9d5ff;border-radius:12px;padding:14px 16px;margin:10px 0">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <strong style="font-size:15px">🧠 التوصيات الآلية</strong>
+      <span class="badge" style="background:<?=$reco['priority_color']?>">أولوية <?=h($reco['priority'])?> · خطر <?=$reco['risk']?>/100</span>
+    </div>
+    <div class="kpis" style="margin:10px 0">
+      <div class="card" style="--c:#7c3aed"><div class="n" style="font-size:18px"><?=h($reco['phase_ar'])?></div><div class="l">المرحلة المقترحة</div></div>
+      <div class="card" style="--c:#2563eb"><div class="n"><?=$reco['prescription']['sets']?>×<?=h($reco['prescription']['reps'])?></div><div class="l">مجموعات×تكرار · RPE <?=$reco['prescription']['rpe']?></div></div>
+      <div class="card" style="--c:<?= $reco['fms_total']>=14?'#16a34a':($reco['fms_total']>=11?'#f59e0b':'#dc2626') ?>"><div class="n"><?=$reco['fms_total']?>/33</div><div class="l">مجموع FMS</div></div>
+    </div>
+    <?php if ($reco['avoid']): ?><div class="f" style="font-size:12.5px;color:#991b1b;margin-bottom:6px">⛔ تجنّب مؤقتًا: <?=h(implode('، ', $reco['avoid']))?></div><?php endif; ?>
+    <?php if ($reco['corrective']): ?>
+      <strong style="font-size:12.5px;color:#334155">تركيز تصحيحي:</strong>
+      <ul style="margin:4px 0 0;padding-inline-start:20px;font-size:12.5px;color:#334155">
+        <?php foreach ($reco['corrective'] as $c): ?><li><?=h($c)?></li><?php endforeach; ?>
+      </ul>
+    <?php else: ?><div class="muted" style="font-size:12px">لا اختلالات مُعلَّمة — تابع البرنامج وفق الهدف.</div><?php endif; ?>
+    <p class="muted" style="font-size:11px;margin:8px 0 0">تُحدَّث التوصيات بعد الحفظ من مدخلات FMS/القوام/الاختلالات و PAR-Q والهدف.</p>
+  </div>
+  <?php elseif ($A): ?>
+    <div class="muted" style="font-size:12.5px;margin:8px 0">💡 أدخِل FMS/القوام/الاختلالات ثم احفظ لتظهر التوصيات الآلية.</div>
+  <?php endif; ?>
 
   <!-- الصحة -->
   <section data-tab="health">
@@ -274,6 +344,49 @@ $sel = fn($k, $v) => ($A !== null && ($A[$k] ?? '') === $v) ? 'selected' : '';
       </table>
     </div>
     <p class="muted" style="font-size:12px">اترك «يسار» فارغًا للمواضع المفردة (الرقبة/الخصر…).</p>
+  </section>
+
+  <!-- FMS -->
+  <section data-tab="fms">
+    <h2>🤸 فحص الحركة الوظيفية (FMS)</h2>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px">
+      <?php foreach ($FMS as $mv=>$lbl): $cur = $fmsMap[$mv] ?? ''; ?>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid #eef2f7;border-radius:8px;padding:6px 10px">
+          <span style="font-size:13px"><?=h($lbl)?></span>
+          <select name="fms[<?=$mv?>]" style="padding:5px 8px;border:1px solid #cbd5e1;border-radius:7px">
+            <option value="">—</option>
+            <?php foreach ($FMS_SC as $s=>$sl): ?><option value="<?=$s?>" <?= $cur!==''&&(int)$cur===$s?'selected':'' ?>><?=h($sl)?></option><?php endforeach; ?>
+          </select>
+        </div>
+      <?php endforeach; ?>
+    </div>
+    <p class="muted" style="font-size:12px">٠ ألم · ١ عاجز · ٢ تعويض · ٣ طبيعي. المجموع الأعلى = حركة أفضل.</p>
+  </section>
+
+  <!-- القوام -->
+  <section data-tab="posture">
+    <h2>🧍 تقييم القوام</h2>
+    <p class="muted" style="font-size:12px;margin-top:0">علّم الانحرافات الملاحَظة (أمامي/جانبي/خلفي).</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:6px">
+      <?php foreach ($POST as $f=>$lbl): $on = $postMap[$f] ?? 0; ?>
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #eef2f7;border-radius:8px;cursor:pointer">
+          <input type="checkbox" name="post[<?=$f?>]" value="1" <?=$on?'checked':''?>><span><?=h($lbl)?></span>
+        </label>
+      <?php endforeach; ?>
+    </div>
+  </section>
+
+  <!-- الاختلالات -->
+  <section data-tab="imbalance">
+    <h2>⚠️ الاختلالات العضلية</h2>
+    <table><tr><th>المنطقة</th><th style="width:90px">ضعيف</th><th style="width:90px">مشدود</th></tr>
+      <?php foreach ($REG as $rg=>$lbl): $w = $imbMap[$rg]['weak'] ?? 0; $t = $imbMap[$rg]['tight'] ?? 0; ?>
+        <tr><td><?=h($lbl)?></td>
+          <td><input type="checkbox" name="weak[<?=$rg?>]" value="1" <?=$w?'checked':''?>></td>
+          <td><input type="checkbox" name="tight[<?=$rg?>]" value="1" <?=$t?'checked':''?>></td></tr>
+      <?php endforeach; ?>
+    </table>
+    <p class="muted" style="font-size:12px">تُغذّي هذه العلامات محرّك التوصيات التصحيحية أعلى الصفحة بعد الحفظ.</p>
   </section>
 
   <div style="margin-top:14px;display:flex;gap:10px;align-items:center">
