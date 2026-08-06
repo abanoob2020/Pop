@@ -90,6 +90,49 @@ function require_member(): array {
     return $m;
 }
 
+// ---- جلسات التدريب الشخصي (PT): سعر افتراضي + حساب المواعيد المتاحة من الورديات ----
+if (!defined('PT_PRICE'))    define('PT_PRICE', 150);   // سعر الجلسة الافتراضي (ج.م)
+if (!defined('PT_SLOT_MIN')) define('PT_SLOT_MIN', 60); // مدّة الموعد بالدقائق
+
+/** يعرض مدى وقتي (بداية–نهاية) معزولًا LTR ليقرأ صحيحًا داخل صفحة RTL. */
+function trange($start, $end, bool $boldStart = false): string {
+    $a = substr((string)$start, 0, 5); $b = substr((string)$end, 0, 5);
+    $left = $boldStart ? "<strong>$a</strong>" : $a;
+    return '<span dir="ltr" style="unicode-bidi:isolate;display:inline-block">' . $left . '–' . $b . '</span>';
+}
+
+/** يحوّل التاريخ إلى ترميز يوم الأسبوع المستخدم في coach_shifts (0=السبت..6=الجمعة). */
+function pt_weekday_for(string $date): int {
+    return ((int)date('w', strtotime($date)) + 1) % 7;  // PHP: 0=الأحد..6=السبت
+}
+
+/**
+ * يبني مواعيد جلسات كابتن في تاريخ معيّن من ورديات ذلك اليوم، ويعلّم المحجوز.
+ * @return array<int,array{start:string,end:string,free:bool}>
+ */
+function pt_slots_for(PDO $pdo, int $coachId, string $date, int $slotMin = PT_SLOT_MIN): array {
+    $wd = pt_weekday_for($date);
+    $sh = $pdo->prepare("SELECT start_time, end_time FROM coach_shifts WHERE coach_id = ? AND weekday = ? ORDER BY start_time");
+    $sh->execute([$coachId, $wd]);
+    $shifts = $sh->fetchAll();
+    $bk = $pdo->prepare("SELECT start_time, end_time FROM pt_sessions
+                         WHERE coach_id = ? AND session_date = ? AND status IN ('booked','completed')");
+    $bk->execute([$coachId, $date]);
+    $busy = $bk->fetchAll();
+    $slots = [];
+    foreach ($shifts as $s) {
+        $t = strtotime($s['start_time']); $end = strtotime($s['end_time']);
+        while ($t + $slotMin * 60 <= $end) {
+            $st = date('H:i:s', $t); $en = date('H:i:s', $t + $slotMin * 60);
+            $free = true;
+            foreach ($busy as $b) if ($st < $b['end_time'] && $en > $b['start_time']) { $free = false; break; }
+            $slots[] = ['start' => $st, 'end' => $en, 'free' => $free];
+            $t += $slotMin * 60;
+        }
+    }
+    return $slots;
+}
+
 // ---- حماية CSRF ----
 function csrf_token(): string {
     if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(32));
@@ -124,6 +167,7 @@ function page_head(string $title, string $active = ''): void {
   <nav>
     <?php if (is_manager()): ?><a href="index.php" class="<?= $active==='dash' ? 'active' : '' ?>">لوحة الإدارة</a><?php endif; ?>
     <a href="captains.php" class="<?= $active==='captains' ? 'active' : '' ?>">واجهة الكباتن</a>
+    <a href="pt.php" class="<?= $active==='pt' ? 'active' : '' ?>">جلسات PT</a>
     <a href="checkin.php" class="<?= $active==='checkin' ? 'active' : '' ?>">الحضور (QR)</a>
     <a href="crm.php" class="<?= $active==='crm' ? 'active' : '' ?>">CRM</a>
     <a href="retention.php" class="<?= $active==='retention' ? 'active' : '' ?>">الاحتفاظ</a>
