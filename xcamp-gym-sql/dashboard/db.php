@@ -224,6 +224,7 @@ function page_head(string $title, string $active = ''): void {
     <?php if (is_manager()): ?><a href="hr.php" class="<?= $active==='hr' ? 'active' : '' ?>">شؤون الكباتن</a><?php endif; ?>
     <?php if (is_manager()): ?><a href="promos.php" class="<?= $active==='promos' ? 'active' : '' ?>">الإحالات والأكواد</a><?php endif; ?>
     <a href="calendar.php" class="<?= $active==='calendar' ? 'active' : '' ?>">التقويم</a>
+    <a href="recipes.php" class="<?= $active==='recipes' ? 'active' : '' ?>">الوصفات</a>
     <a href="templates.php" class="<?= $active==='templates' ? 'active' : '' ?>">التمارين والقوالب</a>
   </nav>
   <span class="sub">

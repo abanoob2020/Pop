@@ -390,6 +390,59 @@ function athlete_dashboard(array $x): array {
 }
 
 /**
+ * حاسبة ماكروز الحصة من وصفة. الإصلاح المحترف: القسمة على **الوزن المطبوخ**
+ * (الحصيلة) لا مجموع الخام — الطبخ يغيّر الوزن والماكروز محفوظة، فتُوزَّع على
+ * وزن الطبق المطبوخ. عند غياب الوزن المطبوخ نرجع لمجموع الخام كتقريب موثّق.
+ * دالة صرفة.
+ * @param ?float $cookedWeight الوزن المطبوخ للوصفة (المقام الصحيح) أو null
+ * @param array  $items        [['name','amount_grams','cal100','p100','c100','f100'], ...]
+ * @param float  $portion      وزن الحصة المطلوبة بالجرام
+ */
+function recipe_portion_macros(?float $cookedWeight, array $items, float $portion): array {
+    $rawTotal = 0.0;
+    foreach ($items as $it) $rawTotal += (float)$it['amount_grams'];
+    $denom = ($cookedWeight !== null && $cookedWeight > 0) ? $cookedWeight : $rawTotal;
+    $denomSource = ($cookedWeight !== null && $cookedWeight > 0) ? 'cooked' : 'raw';
+    if ($denom <= 0 || $portion <= 0)
+        return ['ok' => false, 'msg' => 'وزن غير صالح للحساب.'];
+
+    // ماكروز الوصفة بالكامل (من الكميات الخام × القيم/100غ)
+    $tot = ['cal' => 0.0, 'p' => 0.0, 'c' => 0.0, 'f' => 0.0];
+    $rows = [];
+    foreach ($items as $it) {
+        $w = (float)$it['amount_grams']; $k = $w / 100.0;
+        $cal = (float)$it['cal100'] * $k; $p = (float)$it['p100'] * $k;
+        $c = (float)$it['c100'] * $k;   $f = (float)$it['f100'] * $k;
+        $tot['cal'] += $cal; $tot['p'] += $p; $tot['c'] += $c; $tot['f'] += $f;
+        $rows[] = ['name' => $it['name'], 'raw' => $w, 'cal' => $cal, 'p' => $p, 'c' => $c, 'f' => $f];
+    }
+    $factor = $portion / $denom;                       // نسبة الحصة من الطبق كاملًا
+
+    $breakdown = array_map(fn($r) => [
+        'name'   => $r['name'],
+        'amount' => round($r['raw'] * $factor, 1),      // مساهمة المكوّن (خام) في هذه الحصة
+        'cal'    => round($r['cal'] * $factor, 1),
+        'p'      => round($r['p']   * $factor, 1),
+        'c'      => round($r['c']   * $factor, 1),
+        'f'      => round($r['f']   * $factor, 1),
+    ], $rows);
+
+    return [
+        'ok'           => true,
+        'portion'      => $portion,
+        'denom'        => round($denom, 1),
+        'denom_source' => $denomSource,               // cooked = دقيق، raw = تقريب
+        'raw_total'    => round($rawTotal, 1),
+        'calories'     => round($tot['cal'] * $factor, 1),
+        'protein'      => round($tot['p']   * $factor, 1),
+        'carbs'        => round($tot['c']   * $factor, 1),
+        'fats'         => round($tot['f']   * $factor, 1),
+        'kcal_per_100' => round($tot['cal'] / $denom * 100, 1),   // كثافة الطبق (kcal/100غ)
+        'breakdown'    => $breakdown,
+    ];
+}
+
+/**
  * اختيار تمارين لجلسة: يغطّي مجموعات التركيز بالترتيب، يتجنّب المجموعات المُصابة،
  * بحد أقصى $cap تمرينًا. $exByGroup: خريطة muscle_group => [صفوف التمارين].
  */
