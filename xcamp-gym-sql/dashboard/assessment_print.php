@@ -38,6 +38,18 @@ $meas = [];
 $mm = $pdo->prepare("SELECT * FROM assessment_measurements WHERE assessment_id = ?"); $mm->execute([$aid]);
 foreach ($mm as $r) $meas[$r['site']] = $r;
 
+// الطبقة الإكلينيكية + التوصيات
+$fmsMap = []; $postMap = []; $imbMap = [];
+$f = $pdo->prepare("SELECT movement, score FROM assessment_fms WHERE assessment_id = ?"); $f->execute([$aid]);
+foreach ($f as $r) $fmsMap[$r['movement']] = (int)$r['score'];
+$ps = $pdo->prepare("SELECT finding FROM assessment_posture WHERE assessment_id = ? AND present = 1"); $ps->execute([$aid]);
+foreach ($ps as $r) $postMap[$r['finding']] = 1;
+$im = $pdo->prepare("SELECT region, weak, tight FROM assessment_imbalances WHERE assessment_id = ?"); $im->execute([$aid]);
+foreach ($im as $r) $imbMap[$r['region']] = ['weak' => (int)$r['weak'], 'tight' => (int)$r['tight']];
+$reco = ($fmsMap || $postMap || $imbMap)
+    ? assessment_clinical_reco($fmsMap, $postMap, $imbMap, (bool)($parq['joint_back_pain'] ?? 0), $A['goal_primary'])
+    : null;
+
 $qr = qr_svg(member_qr_token($pdo, $memId), 3, 2);
 
 $GOALS = ['muscle_gain'=>'بناء عضل','fat_loss'=>'خسارة دهون','recomposition'=>'إعادة تكوين','strength'=>'قوة',
@@ -54,7 +66,15 @@ $LMH = ['low'=>'منخفض','medium'=>'متوسط','high'=>'مرتفع'];
 $ACT = ['low'=>'منخفض','moderate'=>'متوسط','high'=>'مرتفع'];
 $lbl = fn($map, $k) => $k !== null && isset($map[$k]) ? $map[$k] : '—';
 $v   = fn($x) => ($x === null || $x === '') ? '—' : h($x);
-$FMS = ['قرفصاء عميقة','خطوة الحاجز','طعنة على خط','حركية الكتف','رفع الساق النشط','دفع ثبات الجذع','ثبات دوراني','توازن ساق واحدة','مدّ علوي','مفصلة الورك','دوران صدري'];
+$FMS = ['deep_squat'=>'قرفصاء عميقة','hurdle_step'=>'خطوة الحاجز','inline_lunge'=>'طعنة على خط',
+        'shoulder_mobility'=>'حركية الكتف','active_slr'=>'رفع الساق النشط','trunk_stability'=>'دفع ثبات الجذع',
+        'rotary_stability'=>'ثبات دوراني','single_leg_balance'=>'توازن ساق واحدة','overhead_reach'=>'مدّ علوي',
+        'hip_hinge'=>'مفصلة الورك','thoracic_rotation'=>'دوران صدري'];
+$POST = ['forward_head'=>'رأس أمامي','rounded_shoulders'=>'كتف مدوّر','kyphosis'=>'تحدّب صدري','lordosis'=>'تقعّر قطني',
+         'anterior_pelvic_tilt'=>'ميل حوضي أمامي','posterior_pelvic_tilt'=>'ميل حوضي خلفي','knee_valgus'=>'ركبة للداخل',
+         'knee_varus'=>'ركبة للخارج','scapular_winging'=>'جناحية اللوح','leg_length'=>'فرق طول الساقين','foot_arch'=>'قوس القدم'];
+$REG = ['chest'=>'الصدر','upper_back'=>'الظهر العلوي','lower_back'=>'أسفل الظهر','shoulders'=>'الأكتاف','biceps'=>'البايسبس',
+        'triceps'=>'الترايسبس','glutes'=>'الأرداف','hamstrings'=>'أوتار الركبة','quads'=>'الأمامية','calves'=>'السمانة'];
 ?><!doctype html>
 <html lang="ar" dir="rtl">
 <head>
@@ -188,20 +208,51 @@ $FMS = ['قرفصاء عميقة','خطوة الحاجز','طعنة على خط'
   </div>
 
   <div class="row">
-    <div class="box"><h3><span class="num">7</span> فحص الحركة الوظيفية (FMS) — تُملأ ميدانيًا</h3><div class="bd">
+    <div class="box"><h3><span class="num">7</span> فحص الحركة الوظيفية (FMS)</h3><div class="bd">
       <table class="g"><tr><th style="width:34%">الحركة</th><th>٠</th><th>١</th><th>٢</th><th>٣</th><th style="width:34%">الحركة</th><th>٠</th><th>١</th><th>٢</th><th>٣</th></tr>
-        <?php for ($i=0;$i<count($FMS);$i+=2): ?>
+        <?php $fk = array_keys($FMS); for ($i=0;$i<count($fk);$i+=2): ?>
           <tr>
             <?php for ($j=$i;$j<$i+2;$j++): ?>
-              <?php if (isset($FMS[$j])): ?><td style="text-align:right"><?=h($FMS[$j])?></td><td>☐</td><td>☐</td><td>☐</td><td>☐</td>
+              <?php if (isset($fk[$j])): $mv=$fk[$j]; $sc=$fmsMap[$mv]??null; ?>
+                <td style="text-align:right"><?=h($FMS[$mv])?></td>
+                <?php for ($s=0;$s<=3;$s++): ?><td<?= $sc===$s ? ' style="background:#111827;color:#fbbf24;font-weight:800"' : '' ?>><?= $sc===$s ? '●' : '☐' ?></td><?php endfor; ?>
               <?php else: ?><td></td><td></td><td></td><td></td><td></td><?php endif; ?>
             <?php endfor; ?>
           </tr>
         <?php endfor; ?>
       </table>
-      <div class="empty-note">المجموع (/36): ______ · القوام والاختلالات: تُلتقط رقميًا في التحديث القادم.</div>
+      <div class="empty-note">المجموع: <strong><?= $reco ? $reco['fms_total'].' / 33' : '____' ?></strong> · ٠ ألم · ١ عاجز · ٢ تعويض · ٣ طبيعي.</div>
     </div></div>
   </div>
+
+  <div class="row">
+    <div class="box"><h3><span class="num">6</span> القوام</h3><div class="bd">
+      <div class="chips">
+        <?php $anyP=false; foreach ($POST as $k=>$lb){ if(!empty($postMap[$k])){ $anyP=true; echo '<span class="chip on">'.h($lb).'</span>'; } }
+              if(!$anyP) echo '<span class="muted" style="font-size:10.5px">لا انحرافات مُعلَّمة</span>'; ?>
+      </div>
+    </div></div>
+    <div class="box"><h3><span class="num">11</span> الاختلالات العضلية</h3><div class="bd">
+      <div class="chips">
+        <?php $anyI=false; foreach ($REG as $k=>$lb){ $f=$imbMap[$k]??null; if($f && ($f['weak']||$f['tight'])){ $anyI=true;
+                echo '<span class="chip on">'.h($lb).' ('.($f['weak']?'ضعيف':'').($f['weak']&&$f['tight']?'/':'').($f['tight']?'مشدود':'').')</span>'; } }
+              if(!$anyI) echo '<span class="muted" style="font-size:10.5px">لا اختلالات مُعلَّمة</span>'; ?>
+      </div>
+    </div></div>
+  </div>
+
+  <?php if ($reco): ?>
+  <div class="box" style="margin-top:8px;border-color:#7c3aed"><h3 style="background:#4c1d95"><span class="num" style="background:#fbbf24">★</span> التوصية الآلية · أولوية <?=h($reco['priority'])?> (خطر <?=$reco['risk']?>/100)</h3><div class="bd">
+    <div class="f"><b>المرحلة المقترحة:</b> <span class="val"><?=h($reco['phase_ar'])?></span> — <?=h($reco['prescription']['label'])?> · <b>الوصفة:</b> <span class="val"><?=$reco['prescription']['sets']?>×<?=h($reco['prescription']['reps'])?> · RPE <?=$reco['prescription']['rpe']?> · راحة <?=$reco['prescription']['rest']?>ث</span></div>
+    <?php if ($reco['avoid']): ?><div class="f" style="color:#991b1b"><b>⛔ تجنّب مؤقتًا:</b> <?=h(implode('، ', $reco['avoid']))?></div><?php endif; ?>
+    <?php if ($reco['corrective']): ?>
+      <div class="f"><b>تركيز تصحيحي:</b></div>
+      <ul style="margin:2px 0 0;padding-inline-start:18px;font-size:10.5px">
+        <?php foreach ($reco['corrective'] as $c): ?><li><?=h($c)?></li><?php endforeach; ?>
+      </ul>
+    <?php endif; ?>
+  </div></div>
+  <?php endif; ?>
 
   <div class="f" style="margin-top:8px"><b>ملاحظات عامة:</b> <span class="val" style="display:inline-block;min-width:60%"><?=$v($A['notes'])?></span></div>
   <div class="sig">

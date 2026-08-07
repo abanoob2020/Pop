@@ -38,6 +38,7 @@ FILES+=(
   "14_pt_sessions.sql"
   "15_referrals.sql"
   "16_assessments.sql"
+  "17_assessment_clinical.sql"
 )
 if [[ "$DB_SEED" != "0" ]]; then
   FILES+=("07_test_queries.sql")

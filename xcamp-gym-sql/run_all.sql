@@ -19,6 +19,7 @@ SOURCE sql/13_coach_hr.sql;
 SOURCE sql/14_pt_sessions.sql;
 SOURCE sql/15_referrals.sql;
 SOURCE sql/16_assessments.sql;
+SOURCE sql/17_assessment_clinical.sql;
 SOURCE sql/07_test_queries.sql;
 
 -- Restore the session state saved in 00_init.sql (valid here because run_all

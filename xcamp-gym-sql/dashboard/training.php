@@ -183,6 +183,99 @@ function mb_strpos_compat(string $haystack, string $needle): bool {
 }
 
 /**
+ * محرّك التوصيات الإكلينيكية للتقييم: من FMS + القوام + الاختلالات + PAR-Q + الهدف
+ * يحسب درجة خطر (0..100) ويشتقّ مرحلة البرنامج (عبر phase_for_goal) ووصفتها
+ * (phase_prescription) والمجموعات الواجب تجنّبها (injury_avoided_groups) وقائمة
+ * تركيز تصحيحي مقروءة. دالة صرفة: تأخذ مصفوفات وتُرجع مصفوفة.
+ *
+ * @param array $fms        movement => score(0..3)
+ * @param array $posture    finding => bool present
+ * @param array $imbalances region => ['weak'=>bool,'tight'=>bool]
+ * @param bool  $jointPain  إشارة ألم مفاصل/ظهر من PAR-Q
+ * @param ?string $goal     goal_primary من التقييم
+ */
+function assessment_clinical_reco(array $fms, array $posture, array $imbalances, bool $jointPain, ?string $goal): array {
+    // ---- درجة الخطر ----
+    $risk = 0;
+    $fmsTotal = 0; $fmsFlags = []; $painMoves = [];
+    $fmsAr = ['deep_squat'=>'قرفصاء عميقة','hurdle_step'=>'خطوة الحاجز','inline_lunge'=>'طعنة على خط',
+        'shoulder_mobility'=>'حركية الكتف','active_slr'=>'رفع الساق النشط','trunk_stability'=>'ثبات الجذع (دفع)',
+        'rotary_stability'=>'ثبات دوراني','single_leg_balance'=>'توازن ساق واحدة','overhead_reach'=>'مدّ علوي',
+        'hip_hinge'=>'مفصلة الورك','thoracic_rotation'=>'دوران صدري'];
+    foreach ($fms as $mv => $sc) {
+        $sc = (int)$sc; $fmsTotal += $sc;
+        if ($sc === 0) { $risk += 20; $fmsFlags[$mv] = 0; $painMoves[] = $mv; }
+        elseif ($sc === 1) { $risk += 10; $fmsFlags[$mv] = 1; }
+        elseif ($sc === 2) { $risk += 3; }
+    }
+    $postureOn = array_keys(array_filter($posture));
+    $risk += count($postureOn) * 6;
+    $weak = []; $tight = [];
+    foreach ($imbalances as $rg => $f) {
+        if (!empty($f['weak']))  { $weak[]  = $rg; $risk += 4; }
+        if (!empty($f['tight'])) { $tight[] = $rg; $risk += 4; }
+    }
+    if ($jointPain) $risk += 15;
+    $risk = max(0, min(100, $risk));
+
+    // ---- المرحلة والوصفة ----
+    $goalMap = ['muscle_gain'=>'muscle_gain','fat_loss'=>'fat_loss','recomposition'=>'fat_loss',
+        'strength'=>'strength','athletic'=>'performance','health_fitness'=>'general_fitness',
+        'rehab'=>'rehab','posture'=>'rehab','flexibility'=>'general_fitness','other'=>'general_fitness'];
+    $phase = phase_for_goal($goalMap[$goal] ?? 'general_fitness', (float)$risk);
+    $phaseAr = ['corrective'=>'إصلاحي','stabilization'=>'تثبيت','hypertrophy'=>'تضخيم',
+        'strength'=>'قوة','power'=>'قدرة','maintenance'=>'محافظة'][$phase] ?? $phase;
+    $rx = phase_prescription($phase);
+
+    // ---- المجموعات الواجب تجنّبها (من ألم PAR-Q + حركات FMS المؤلمة) ----
+    $areaMap = ['deep_squat'=>'knee','hip_hinge'=>'back','single_leg_balance'=>'knee','inline_lunge'=>'knee',
+        'active_slr'=>'hip','hurdle_step'=>'hip','shoulder_mobility'=>'shoulder','overhead_reach'=>'shoulder',
+        'trunk_stability'=>'back','rotary_stability'=>'back','thoracic_rotation'=>'back'];
+    $injuries = [];
+    if ($jointPain) $injuries[] = ['body_area' => 'back', 'current_status' => 'active'];
+    foreach ($painMoves as $mv) if (isset($areaMap[$mv])) $injuries[] = ['body_area' => $areaMap[$mv], 'current_status' => 'active'];
+    $avoid = injury_avoided_groups($injuries);
+    $avoidAr = ['legs'=>'الأرجل','back'=>'الظهر','shoulders'=>'الأكتاف','chest'=>'الصدر','arms'=>'الذراعين','glutes'=>'الأرداف'];
+
+    // ---- تركيز تصحيحي مقروء ----
+    $corr = [];
+    $postCue = [
+        'forward_head'=>'رأس أمامي: إطالة خلف الرقبة + تقوية الثنيات العنقية العميقة',
+        'rounded_shoulders'=>'كتف مدوّر: شدّ الصدر + تقوية الظهر العلوي والمثبّتات الكتفية',
+        'kyphosis'=>'تحدّب صدري: إطالة صدرية + تقوية باسطات الصدر الظهرية',
+        'lordosis'=>'تقعّر قطني: إطالة ثنيات الورك + تقوية الـcore والأرداف',
+        'anterior_pelvic_tilt'=>'ميل حوضي أمامي: إطالة ثنيات الورك + تفعيل الأرداف/البطن',
+        'posterior_pelvic_tilt'=>'ميل حوضي خلفي: تقوية باسطات الورك + إطالة أوتار الركبة',
+        'knee_valgus'=>'ركبة للداخل: تقوية مبعّدات الورك والألوية المتوسطة',
+        'knee_varus'=>'ركبة للخارج: تقوية المقرّبات وتوازن الحمل',
+        'scapular_winging'=>'جناحية اللوح: تقوية المنشارية الأمامية',
+        'leg_length'=>'فرق طول الساقين: تقييم بيوميكانيكي وعمل توازن',
+        'foot_arch'=>'قوس القدم: دعم القوس وتقوية القدم/الكاحل',
+    ];
+    foreach ($postureOn as $f) if (isset($postCue[$f])) $corr[] = $postCue[$f];
+    $regAr = ['chest'=>'الصدر','upper_back'=>'الظهر العلوي','lower_back'=>'أسفل الظهر','shoulders'=>'الأكتاف',
+        'biceps'=>'البايسبس','triceps'=>'الترايسبس','glutes'=>'الأرداف','hamstrings'=>'أوتار الركبة',
+        'quads'=>'الأمامية','calves'=>'السمانة'];
+    foreach ($weak  as $rg) $corr[] = 'ضعف ' . ($regAr[$rg] ?? $rg) . ': أضِف تمارين تقوية موجّهة';
+    foreach ($tight as $rg) $corr[] = 'شدّ ' . ($regAr[$rg] ?? $rg) . ': أضِف إطالة/تحرير عضلي';
+    if (isset($fmsFlags['trunk_stability']) || isset($fmsFlags['rotary_stability'])) $corr[] = 'ثبات جذع منخفض: ابدأ بتمارين تفعيل الـcore قبل الأحمال المركّبة';
+    if (isset($fmsFlags['shoulder_mobility']) || isset($fmsFlags['overhead_reach'])) $corr[] = 'حركية كتف محدودة: عمل حركية صدرية/كتفية قبل الضغط العلوي';
+    if (isset($fmsFlags['deep_squat'])) $corr[] = 'قرفصاء محدودة: حركية كاحل/ورك قبل تحميل السكوات';
+
+    $priority = $risk >= 60 ? ['عالية','#dc2626'] : ($risk >= 35 ? ['متوسطة','#f59e0b'] : ['منخفضة','#16a34a']);
+
+    return [
+        'risk'         => $risk,
+        'priority'     => $priority[0], 'priority_color' => $priority[1],
+        'phase'        => $phase, 'phase_ar' => $phaseAr,
+        'prescription' => $rx,
+        'fms_total'    => $fmsTotal, 'fms_flags' => $fmsFlags, 'fms_ar' => $fmsAr,
+        'avoid'        => array_map(fn($g) => $avoidAr[$g] ?? $g, $avoid),
+        'corrective'   => $corr,
+    ];
+}
+
+/**
  * مخطط البرنامج حسب الهدف: قائمة جلسات، كل جلسة بها عنوان + مجموعات التركيز + يوم الإزاحة.
  * أهداف القوة/التضخيم/الأداء → دفع/سحب/أرجل؛ الباقي → كامل الجسم ×3.
  */
