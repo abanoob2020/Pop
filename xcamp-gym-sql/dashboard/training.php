@@ -296,6 +296,99 @@ function program_blueprint(string $goal): array {
     ];
 }
 
+/** تصنيف مؤشر كتلة الجسم → [الفئة، اللون، الأيقونة]. */
+function bmi_category(float $bmi): array {
+    if ($bmi <= 0)    return ['—', '#94a3b8', '❔'];
+    if ($bmi < 18.5)  return ['نقص وزن', '#eab308', '⚡'];
+    if ($bmi < 25)    return ['طبيعي', '#22c55e', '✅'];
+    if ($bmi < 30)    return ['زيادة وزن', '#f59e0b', '⚠️'];
+    if ($bmi < 35)    return ['سمنة درجة 1', '#f97316', '⚠️'];
+    if ($bmi < 40)    return ['سمنة درجة 2', '#ef4444', '🚨'];
+    return ['سمنة مفرطة', '#dc2626', '🚨'];
+}
+
+/**
+ * لوحة الرياضي اليومية: تجمع مقاييس العضو الحقيقية في عرض موحّد مع بطاقات
+ * وتنبيهات وتوصيات ذكية. دالة عرض صرفة: تأخذ القيم المُجمّعة وتُرجع بنية اللوحة.
+ * مصدر واحد للجاهزية: readinessScore = 100 − fatigue (يُصحّح ازدواج المنطق الأصلي).
+ *
+ * @param array $x name,program,bmi,weight,body_fat,calories,protein,risk_num(0..100),
+ *                 fatigue(0..100),sleep_hours(?),attendance30
+ */
+function athlete_dashboard(array $x): array {
+    $bmi     = (float)($x['bmi'] ?? 0);
+    $weight  = (float)($x['weight'] ?? 0);
+    $cal     = (int)($x['calories'] ?? 0);
+    $prot    = (float)($x['protein'] ?? 0);
+    $riskNum = (int)($x['risk_num'] ?? 0);
+    $fatigue = max(0, min(100, (int)($x['fatigue'] ?? 0)));
+    $sleep   = isset($x['sleep_hours']) && $x['sleep_hours'] !== null ? (float)$x['sleep_hours'] : null;
+    $program = (string)($x['program'] ?? 'لياقة عامة');
+    $readiness = 100 - $fatigue;
+
+    // نطاق الخطر
+    if ($riskNum >= 60)      [$riskLabel, $riskBand, $riskColor] = ['مرتفع', 'high', '#ef4444'];
+    elseif ($riskNum >= 35)  [$riskLabel, $riskBand, $riskColor] = ['متوسط', 'moderate', '#eab308'];
+    else                     [$riskLabel, $riskBand, $riskColor] = ['منخفض', 'low', '#22c55e'];
+    [$bmiCat, $bmiColor, $bmiIcon] = bmi_category($bmi);
+
+    // ── التنبيهات ──
+    $alerts = [];
+    if ($riskBand === 'high')
+        $alerts[] = ['type'=>'danger','icon'=>'🚨','message'=>"مستوى خطر مرتفع ($riskNum/100) — راجع البيانات فورًا",'action'=>'مراجعة PAR-Q والتاريخ الطبي'];
+    if ($fatigue >= 65)
+        $alerts[] = ['type'=>'danger','icon'=>'😴','message'=>"إرهاق مرتفع ($fatigue/100) — يُنصح بيوم راحة",'action'=>'تخفيف الحمل التدريبي 40–50%'];
+    elseif ($fatigue >= 45)
+        $alerts[] = ['type'=>'warning','icon'=>'⚠️','message'=>"إرهاق متوسط ($fatigue/100) — راقب التعافي",'action'=>'تقليل الحجم أو الشدة 20%'];
+    if ($bmi > 30)
+        $alerts[] = ['type'=>'warning','icon'=>'⚖️','message'=>"مؤشر كتلة الجسم $bmi — $bmiCat",'action'=>'برنامج تنشيف + متابعة'];
+    elseif ($bmi > 0 && $bmi < 18.5)
+        $alerts[] = ['type'=>'info','icon'=>'⚖️','message'=>"مؤشر كتلة الجسم $bmi — نقص وزن",'action'=>'زيادة السعرات + برنامج تضخيم'];
+    if ($cal > 0 && $cal < 1200)
+        $alerts[] = ['type'=>'warning','icon'=>'🍽️','message'=>"سعرات منخفضة جدًا ($cal) — خطر على الصحة",'action'=>'رفع السعرات إلى 1500 على الأقل'];
+    if ($weight > 0 && $prot > 0 && $prot < 1.2 * $weight)
+        $alerts[] = ['type'=>'info','icon'=>'🥩','message'=>'البروتين أقل من الموصى به','action'=>'استهدف 1.6–2.2 جم/كجم'];
+
+    // ── التوصيات ──
+    $recs = [];
+    if ($readiness >= 80)     $recs[] = ['category'=>'training','priority'=>'low','text'=>'جاهزية عالية — يمكن رفع الشدة أو الحجم هذا الأسبوع'];
+    elseif ($readiness >= 50) $recs[] = ['category'=>'training','priority'=>'medium','text'=>'تدريب معتدل — حافظ على الشدة الحالية'];
+    else                      $recs[] = ['category'=>'training','priority'=>'high','text'=>'الأولوية للتعافي — تمارين خفيفة أو راحة نشطة'];
+    if ($cal > 0) {
+        $pPct = (int)round($prot * 4 / $cal * 100);
+        if ($pPct < 25) $recs[] = ['category'=>'nutrition','priority'=>'medium','text'=>"نسبة البروتين منخفضة ($pPct%) — استهدف 25–35%"];
+    }
+    if ($sleep !== null && $sleep < 6)
+        $recs[] = ['category'=>'recovery','priority'=>'high','text'=>'النوم غير كافٍ ('.$sleep.'س) — استهدف 7–9 ساعات'];
+
+    // ── البطاقات ──
+    $cards = [
+        ['label'=>'BMI','value'=>$bmi>0?number_format($bmi,1):'—','unit'=>'kg/m²','color'=>$bmiColor,'icon'=>$bmiIcon,'sub'=>$bmiCat],
+        ['label'=>'السعرات','value'=>$cal?:'—','unit'=>'kcal','color'=>$cal>=1800?'#22c55e':($cal?'#eab308':'#94a3b8'),'icon'=>'🔥','sub'=>''],
+        ['label'=>'بروتين','value'=>$prot?rtrim(rtrim(number_format($prot,1),'0'),'.'):'—','unit'=>'g','color'=>$prot>=100?'#22c55e':($prot?'#eab308':'#94a3b8'),'icon'=>'💪','sub'=>''],
+        ['label'=>'الخطر','value'=>$riskLabel,'unit'=>'','color'=>$riskColor,'icon'=>'⚠️','sub'=>$riskNum.'/100'],
+        ['label'=>'الإرهاق','value'=>$fatigue,'unit'=>'/100','color'=>$fatigue<=35?'#22c55e':($fatigue<=60?'#eab308':'#ef4444'),'icon'=>'😴','sub'=>''],
+        ['label'=>'الجاهزية','value'=>$readiness,'unit'=>'/100','color'=>$readiness>=70?'#22c55e':($readiness>=40?'#eab308':'#ef4444'),'icon'=>$readiness>=70?'🟢':($readiness>=40?'🟡':'🔴'),'sub'=>''],
+    ];
+
+    $trainReco = $readiness >= 70 ? 'جاهز للتدريب الكامل' : ($readiness >= 40 ? 'تدريب معدّل (خفيف–متوسط)' : 'راحة أو تعافٍ نشط');
+    $summary = ($readiness >= 70 ? '✅ جاهز للتدريب' : '⚠️ يحتاج تعافي') . " · $program · " . ($cal?:'—') . " kcal · " . ($prot?rtrim(rtrim(number_format($prot,1),'0'),'.'):'—') . "g بروتين";
+
+    return [
+        'readiness_score' => $readiness,
+        'fatigue'         => $fatigue,
+        'risk_label'      => $riskLabel, 'risk_band' => $riskBand, 'risk_num' => $riskNum,
+        'bmi_category'    => $bmiCat,
+        'cards'           => $cards,
+        'alerts'          => $alerts,
+        'recommendations' => $recs,
+        'training_reco'   => $trainReco,
+        'ready_to_train'  => $readiness >= 60,
+        'needs_rest'      => $readiness < 40,
+        'summary'         => $summary,
+    ];
+}
+
 /**
  * اختيار تمارين لجلسة: يغطّي مجموعات التركيز بالترتيب، يتجنّب المجموعات المُصابة،
  * بحد أقصى $cap تمرينًا. $exByGroup: خريطة muscle_group => [صفوف التمارين].

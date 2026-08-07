@@ -213,6 +213,7 @@ function page_head(string $title, string $active = ''): void {
     <?php if (is_manager()): ?><a href="index.php" class="<?= $active==='dash' ? 'active' : '' ?>">لوحة الإدارة</a><?php endif; ?>
     <a href="captains.php" class="<?= $active==='captains' ? 'active' : '' ?>">واجهة الكباتن</a>
     <a href="pt.php" class="<?= $active==='pt' ? 'active' : '' ?>">جلسات PT</a>
+    <a href="athlete.php" class="<?= $active==='athlete' ? 'active' : '' ?>">لوحة الرياضي</a>
     <a href="assess.php" class="<?= $active==='assess' ? 'active' : '' ?>">التقييم</a>
     <a href="checkin.php" class="<?= $active==='checkin' ? 'active' : '' ?>">الحضور (QR)</a>
     <a href="crm.php" class="<?= $active==='crm' ? 'active' : '' ?>">CRM</a>
