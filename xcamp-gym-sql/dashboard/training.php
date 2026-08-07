@@ -268,9 +268,11 @@ function assessment_clinical_reco(array $fms, array $posture, array $imbalances,
         'risk'         => $risk,
         'priority'     => $priority[0], 'priority_color' => $priority[1],
         'phase'        => $phase, 'phase_ar' => $phaseAr,
+        'goal_workout' => $goalMap[$goal] ?? 'general_fitness',
         'prescription' => $rx,
         'fms_total'    => $fmsTotal, 'fms_flags' => $fmsFlags, 'fms_ar' => $fmsAr,
         'avoid'        => array_map(fn($g) => $avoidAr[$g] ?? $g, $avoid),
+        'avoid_raw'    => $avoid,
         'corrective'   => $corr,
     ];
 }

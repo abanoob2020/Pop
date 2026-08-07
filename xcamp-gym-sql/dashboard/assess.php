@@ -129,6 +129,53 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->commit();
             header('Location: assess.php?a=' . $aid . '&ok=1');
             exit;
+        } elseif (($_POST['action'] ?? '') === 'gen_program_from_assessment') {
+            $aid = (int)($_POST['assessment_id'] ?? 0);
+            $q = $pdo->prepare("SELECT member_id, goal_primary FROM member_assessments WHERE assessment_id = ?");
+            $q->execute([$aid]); $row = $q->fetch();
+            if (!$row) throw new RuntimeException('تقييم غير موجود.');
+            $memberId = (int)$row['member_id'];
+            if (!asm_member_allowed($pdo, $isCoach, $myCoachId, $memberId)) throw new RuntimeException('غير مسموح — العضو ليس ضمن أعضائك.');
+            // أعد حساب التوصية من بيانات القاعدة (لا تثق بالعميل)
+            $fmsMap = []; foreach ($pdo->query("SELECT movement, score FROM assessment_fms WHERE assessment_id = $aid") as $r) $fmsMap[$r['movement']] = (int)$r['score'];
+            $postMap = []; foreach ($pdo->query("SELECT finding FROM assessment_posture WHERE assessment_id = $aid AND present = 1") as $r) $postMap[$r['finding']] = 1;
+            $imbMap = []; foreach ($pdo->query("SELECT region, weak, tight FROM assessment_imbalances WHERE assessment_id = $aid") as $r) $imbMap[$r['region']] = ['weak' => (int)$r['weak'], 'tight' => (int)$r['tight']];
+            if (!$fmsMap && !$postMap && !$imbMap) throw new RuntimeException('أدخِل بيانات FMS/القوام/الاختلالات أولًا لتوليد برنامج.');
+            $jp = (int)($pdo->query("SELECT answer FROM assessment_parq WHERE assessment_id = $aid AND item = 'joint_back_pain'")->fetchColumn() ?: 0);
+            $R = assessment_clinical_reco($fmsMap, $postMap, $imbMap, (bool)$jp, $row['goal_primary']);
+            // معطيات التوليد
+            $weeks = max(1, min(12, (int)($_POST['weeks'] ?? 4)));
+            $start = date('Y-m-d');
+            $end   = date('Y-m-d', strtotime($start) + ($weeks * 7 - 1) * 86400);
+            $coachId = (int)($pdo->query("SELECT coach_id FROM members WHERE member_id = $memberId")->fetchColumn() ?: 0) ?: null;
+            $goalW = $R['goal_workout']; $phase = $R['phase']; $rx = $R['prescription']; $avoid = $R['avoid_raw'];
+            $exByGroup = [];
+            foreach ($pdo->query("SELECT exercise_id, name, muscle_group FROM exercises WHERE active = 1 ORDER BY exercise_id") as $ex) $exByGroup[$ex['muscle_group']][] = $ex;
+            $blueprint = program_blueprint($goalW);
+            $pdo->beginTransaction();
+            $pdo->prepare("INSERT INTO workout_plans (member_id, coach_id, goal_type, phase, start_date, end_date, status, notes)
+                           VALUES (?,?,?,?,?,?,'active',?)")
+                ->execute([$memberId, $coachId, $goalW, $phase, $start, $end,
+                           'من التقييم #' . $aid . ' — ' . $rx['label'] . ($R['avoid'] ? ' · تجنّب: ' . implode('،', $R['avoid']) : '')]);
+            $planId = (int)$pdo->lastInsertId();
+            $insS = $pdo->prepare("INSERT INTO workout_sessions (workout_plan_id, session_date, muscle_group, completion_status, notes) VALUES (?,?,?,'planned',?)");
+            $insX = $pdo->prepare("INSERT INTO session_exercises (session_id, exercise_id, sort_order, sets, reps, rest_sec, rpe, notes) VALUES (?,?,?,?,?,?,?,?)");
+            $gen = 0;
+            foreach ($blueprint as $bp) {
+                $picks = select_session_exercises($exByGroup, $bp['focus'], $avoid, 5);
+                if (!$picks) continue;
+                for ($w = 0; $w < $weeks; $w++) {
+                    $date = date('Y-m-d', strtotime($start) + ($w * 7 + (int)$bp['day_offset']) * 86400);
+                    $insS->execute([$planId, $date, $bp['muscle_group'], $bp['title']]);
+                    $sid = (int)$pdo->lastInsertId(); $so = 1;
+                    foreach ($picks as $ex) $insX->execute([$sid, $ex['exercise_id'], $so++, $rx['sets'], $rx['reps'], $rx['rest'], $rx['rpe'], 'مقترح — ' . $rx['label']]);
+                    $gen++;
+                }
+            }
+            if ($gen === 0) { $pdo->rollBack(); throw new RuntimeException('تعذّر توليد جلسات — قد تكون كل المجموعات مستبعَدة.'); }
+            $pdo->commit();
+            header('Location: assess.php?a=' . $aid . '&gen=' . $planId . '&mem=' . $memberId);
+            exit;
         }
     } catch (Throwable $e) {
         if ($pdo && $pdo->inTransaction()) $pdo->rollBack();
@@ -140,6 +187,8 @@ page_head('التقييم', 'assess');
 if ($error && !$pdo) { db_error_box($error); page_foot(); exit; }
 if ($error) echo '<div class="err">' . h($error) . '</div>';
 if (isset($_GET['ok'])) echo '<div class="flash">تم حفظ التقييم بنجاح ✓</div>';
+if (isset($_GET['gen'])) { $gp = (int)$_GET['gen']; $gm = (int)($_GET['mem'] ?? 0);
+    echo '<div class="flash">🏗️ أُنشئ برنامج تدريبي (#' . $gp . ') من هذا التقييم. <a class="link" href="captains.php?member=' . $gm . '">افتح برنامج العضو ←</a></div>'; }
 
 $scope = $isCoach ? " AND m.coach_id = " . $myCoachId : "";
 
@@ -232,6 +281,39 @@ $sel = fn($k, $v) => ($A !== null && ($A[$k] ?? '') === $v) ? 'selected' : '';
   <?php if ($A): ?><a href="assessment_print.php?a=<?=$openId?>" target="_blank" style="background:#111827;color:#fbbf24;border:0;padding:8px 16px;border-radius:8px;font-weight:700;text-decoration:none;font-size:13px">🖨️ طباعة الاستمارة</a><?php endif; ?>
 </div>
 
+<?php if ($reco): ?>
+<div style="background:linear-gradient(180deg,#faf5ff,#fff);border:1px solid #e9d5ff;border-radius:12px;padding:14px 16px;margin:10px 0">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+    <strong style="font-size:15px">🧠 التوصيات الآلية</strong>
+    <span class="badge" style="background:<?=$reco['priority_color']?>">أولوية <?=h($reco['priority'])?> · خطر <?=$reco['risk']?>/100</span>
+  </div>
+  <div class="kpis" style="margin:10px 0">
+    <div class="card" style="--c:#7c3aed"><div class="n" style="font-size:18px"><?=h($reco['phase_ar'])?></div><div class="l">المرحلة المقترحة</div></div>
+    <div class="card" style="--c:#2563eb"><div class="n"><?=$reco['prescription']['sets']?>×<?=h($reco['prescription']['reps'])?></div><div class="l">مجموعات×تكرار · RPE <?=$reco['prescription']['rpe']?></div></div>
+    <div class="card" style="--c:<?= $reco['fms_total']>=14?'#16a34a':($reco['fms_total']>=11?'#f59e0b':'#dc2626') ?>"><div class="n"><?=$reco['fms_total']?>/33</div><div class="l">مجموع FMS</div></div>
+  </div>
+  <?php if ($reco['avoid']): ?><div class="f" style="font-size:12.5px;color:#991b1b;margin-bottom:6px">⛔ تجنّب مؤقتًا: <?=h(implode('، ', $reco['avoid']))?></div><?php endif; ?>
+  <?php if ($reco['corrective']): ?>
+    <strong style="font-size:12.5px;color:#334155">تركيز تصحيحي:</strong>
+    <ul style="margin:4px 0 8px;padding-inline-start:20px;font-size:12.5px;color:#334155">
+      <?php foreach ($reco['corrective'] as $c): ?><li><?=h($c)?></li><?php endforeach; ?>
+    </ul>
+  <?php else: ?><div class="muted" style="font-size:12px">لا اختلالات مُعلَّمة — تابع البرنامج وفق الهدف.</div><?php endif; ?>
+  <div style="border-top:1px dashed #e9d5ff;margin-top:8px;padding-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <form method="post" style="margin:0;display:flex;gap:8px;align-items:center;flex-wrap:wrap" onsubmit="return confirm('إنشاء برنامج تدريبي بمرحلة <?=h($reco['phase_ar'])?> (<?=$reco['prescription']['sets']?>×<?=h($reco['prescription']['reps'])?>) من هذا التقييم؟')"><?=csrf_field()?>
+      <input type="hidden" name="action" value="gen_program_from_assessment">
+      <input type="hidden" name="assessment_id" value="<?=$openId?>">
+      <label style="font-size:12px;color:#475569">مدّة (أسابيع)</label>
+      <input type="number" name="weeks" value="4" min="1" max="12" style="width:64px;padding:6px;border:1px solid #cbd5e1;border-radius:8px">
+      <button type="submit" style="background:#7c3aed;color:#fff;border:0;padding:9px 18px;border-radius:9px;font-weight:800;cursor:pointer">🏗️ أنشئ برنامجًا من هذا التقييم</button>
+    </form>
+    <span class="muted" style="font-size:11.5px">يبني برنامجًا نشطًا بمرحلة/وصفة التوصية، ويتجنّب المجموعات المُشار إليها.</span>
+  </div>
+</div>
+<?php elseif ($A): ?>
+  <div class="muted" style="font-size:12.5px;margin:8px 0">💡 أدخِل FMS/القوام/الاختلالات ثم احفظ لتظهر التوصيات الآلية وزرّ توليد البرنامج.</div>
+<?php endif; ?>
+
 <form method="post"><?=csrf_field()?>
   <input type="hidden" name="action" value="save_assessment">
   <input type="hidden" name="member_id" value="<?=$memId?>">
@@ -253,30 +335,6 @@ $sel = fn($k, $v) => ($A !== null && ($A[$k] ?? '') === $v) ? 'selected' : '';
     <button type="button" data-tabtarget="posture">🧍 القوام</button>
     <button type="button" data-tabtarget="imbalance">⚠️ الاختلالات</button>
   </nav>
-
-  <?php if ($reco): ?>
-  <div style="background:linear-gradient(180deg,#faf5ff,#fff);border:1px solid #e9d5ff;border-radius:12px;padding:14px 16px;margin:10px 0">
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-      <strong style="font-size:15px">🧠 التوصيات الآلية</strong>
-      <span class="badge" style="background:<?=$reco['priority_color']?>">أولوية <?=h($reco['priority'])?> · خطر <?=$reco['risk']?>/100</span>
-    </div>
-    <div class="kpis" style="margin:10px 0">
-      <div class="card" style="--c:#7c3aed"><div class="n" style="font-size:18px"><?=h($reco['phase_ar'])?></div><div class="l">المرحلة المقترحة</div></div>
-      <div class="card" style="--c:#2563eb"><div class="n"><?=$reco['prescription']['sets']?>×<?=h($reco['prescription']['reps'])?></div><div class="l">مجموعات×تكرار · RPE <?=$reco['prescription']['rpe']?></div></div>
-      <div class="card" style="--c:<?= $reco['fms_total']>=14?'#16a34a':($reco['fms_total']>=11?'#f59e0b':'#dc2626') ?>"><div class="n"><?=$reco['fms_total']?>/33</div><div class="l">مجموع FMS</div></div>
-    </div>
-    <?php if ($reco['avoid']): ?><div class="f" style="font-size:12.5px;color:#991b1b;margin-bottom:6px">⛔ تجنّب مؤقتًا: <?=h(implode('، ', $reco['avoid']))?></div><?php endif; ?>
-    <?php if ($reco['corrective']): ?>
-      <strong style="font-size:12.5px;color:#334155">تركيز تصحيحي:</strong>
-      <ul style="margin:4px 0 0;padding-inline-start:20px;font-size:12.5px;color:#334155">
-        <?php foreach ($reco['corrective'] as $c): ?><li><?=h($c)?></li><?php endforeach; ?>
-      </ul>
-    <?php else: ?><div class="muted" style="font-size:12px">لا اختلالات مُعلَّمة — تابع البرنامج وفق الهدف.</div><?php endif; ?>
-    <p class="muted" style="font-size:11px;margin:8px 0 0">تُحدَّث التوصيات بعد الحفظ من مدخلات FMS/القوام/الاختلالات و PAR-Q والهدف.</p>
-  </div>
-  <?php elseif ($A): ?>
-    <div class="muted" style="font-size:12.5px;margin:8px 0">💡 أدخِل FMS/القوام/الاختلالات ثم احفظ لتظهر التوصيات الآلية.</div>
-  <?php endif; ?>
 
   <!-- الصحة -->
   <section data-tab="health">
