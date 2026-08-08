@@ -214,6 +214,7 @@ function page_head(string $title, string $active = ''): void {
     <a href="captains.php" class="<?= $active==='captains' ? 'active' : '' ?>">واجهة الكباتن</a>
     <a href="pt.php" class="<?= $active==='pt' ? 'active' : '' ?>">جلسات PT</a>
     <a href="athlete.php" class="<?= $active==='athlete' ? 'active' : '' ?>">لوحة الرياضي</a>
+    <a href="progression.php" class="<?= $active==='progression' ? 'active' : '' ?>">التتبّع التكيّفي</a>
     <a href="assess.php" class="<?= $active==='assess' ? 'active' : '' ?>">التقييم</a>
     <a href="checkin.php" class="<?= $active==='checkin' ? 'active' : '' ?>">الحضور (QR)</a>
     <a href="crm.php" class="<?= $active==='crm' ? 'active' : '' ?>">CRM</a>

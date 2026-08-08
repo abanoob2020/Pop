@@ -23,6 +23,69 @@ function epley_1rm(?float $load, ?int $reps): ?float {
 /** تقريب لأقرب 2.5 كجم (أصغر زيادة أطباق شائعة) */
 function round25(float $x): float { return round($x / 2.5) * 2.5; }
 
+/** تقدير 1RM بمعادلة Brzycki: load × 36 / (37 − reps) — أدقّ في نطاق 2..10 تكرار */
+function brzycki_1rm(?float $load, ?int $reps): ?float {
+    if (!$load || $load <= 0 || !$reps || $reps < 1) return null;
+    if ($reps === 1) return $load;
+    if ($reps >= 37) return null;              // المعادلة تنهار عند 37 تكرار
+    return round($load * 36 / (37 - $reps), 1);
+}
+
+/**
+ * المحرّك التكيّفي: من أداء مجموعة اختبار (وزن/تكرار/RPE/RIR) يحسب 1RM المقدَّر
+ * ويقترح **وزن العمل** للأسبوع القادم — والإصلاح المحترف هنا: وزن العمل يُشتقّ من
+ * الوزن المُؤدَّى (performed) لا من الـ1RM؛ فالـ1RM حِمل تكرار واحد لا وزن عمل.
+ *
+ * القرار من مقياس الجهد (RPE/RIR الأقلّ إجهادًا يعطي مساحة للزيادة):
+ *   RPE ≤ 8 و RIR ≥ 2 → up   : زد ~3% (بحد أدنى +2.5 كجم فعلية)
+ *   RPE = 9  أو RIR = 1        → hold : ثبّت الوزن (قريب من الفشل)
+ *   RPE = 10 أو RIR = 0        → warn : تخفيف ~5% + تنبيه (وصل للفشل)
+ * حماية الانحدار: إن هبط 1RM المقدَّر تحت 95% من السابق نُنبّه (تعب/سوء أداء).
+ *
+ * @return array{est_1rm:?float, next_weight:?float, action:string, increase_pct:float,
+ *               note:string, alert:?string, formula:string}
+ */
+function adaptive_load_decision(float $performed, int $reps, int $rpe, int $rir,
+                               string $formula = 'epley', ?float $prev1rm = null): array {
+    $formula = ($formula === 'brzycki') ? 'brzycki' : 'epley';
+    $est = ($formula === 'brzycki') ? brzycki_1rm($performed, $reps) : epley_1rm($performed, $reps);
+
+    // قرار الحمل القادم مبنيّ على الوزن المُؤدَّى، لا على 1RM
+    if ($rpe >= 10 || $rir <= 0) {
+        $action = 'warn';  $incPct = -5.0;
+        $note   = 'وصلت للفشل (RPE 10 / RIR 0): خفّف الحمل وراجع الأداء والتعافي.';
+        $alert  = 'مجهود أقصى — تخفيف مؤقّت لتفادي الإفراط والإصابة.';
+    } elseif ($rpe >= 9 || $rir <= 1) {
+        $action = 'hold';  $incPct = 0.0;
+        $note   = 'قريب من الفشل (RPE 9 / RIR 1): ثبّت الوزن حتى يهبط الجهد.';
+        $alert  = null;
+    } else {
+        $action = 'up';    $incPct = 3.0;
+        $note   = 'هامش جيّد (RPE ≤ 8 و RIR ≥ 2): زِد الحمل تدريجيًا.';
+        $alert  = null;
+    }
+
+    $raw  = $performed * (1 + $incPct / 100.0);
+    $next = round25($raw);
+    if ($action === 'up' && $next <= $performed) $next = round25($performed + 2.5); // ضمان زيادة فعلية
+
+    // حماية الانحدار: مقارنة 1RM المقدَّر بالسابق
+    if ($est !== null && $prev1rm !== null && $prev1rm > 0 && $est < $prev1rm * 0.95) {
+        $alert = ($alert ? $alert . ' ' : '')
+               . 'انحدار في القوة (1RM أقلّ من السابق بأكثر من 5%): افحص النوم والتغذية والحِمل.';
+    }
+
+    return [
+        'est_1rm'      => $est,
+        'next_weight'  => $next,
+        'action'       => $action,
+        'increase_pct' => $incPct,
+        'note'         => $note,
+        'alert'        => $alert,
+        'formula'      => $formula,
+    ];
+}
+
 /** المنطقة التدريبية حسب التكرارات */
 function load_zone(?int $reps): string {
     if ($reps === null) return '';
