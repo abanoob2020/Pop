@@ -1,0 +1,30 @@
+# =============================================================================
+# مثال جدولة النسخ الاحتياطي عبر cron لـ xcamp-gym-sql
+# -----------------------------------------------------------------------------
+# انسخ سطرًا مناسبًا إلى crontab (عبر: crontab -e). عدّل المسار المطلق للمشروع
+# وبيانات الاتصال. لا تضع كلمة مرور القاعدة مكشوفة في ملف عام — يُفضَّل قراءتها
+# من ملف بيئة محمي (chmod 600) كما في المثال الثاني.
+#
+# ملاحظات:
+#   - cron لا يحمّل ملف تعريفك (~/.bashrc)، فمرّر متغيّرات البيئة صراحةً.
+#   - أضِف NO_COLOR=1 حتى لا تتسرّب رموز الألوان إلى ملف السجلّ.
+#   - BACKUP_KEEP يحدّد كم نسخة يُبقيها (الافتراضي 14).
+# =============================================================================
+
+# نسخة يومية 2:30 فجرًا، الاحتفاظ بآخر 14 نسخة (المتغيّرات مباشرة في السطر):
+30 2 * * *  cd /opt/xcamp-gym-sql && NO_COLOR=1 DB_HOST=127.0.0.1 DB_USER=appuser DB_PASS='REPLACE_ME' DB_NAME=xcamp_gym BACKUP_KEEP=14 ./backup.sh >> logs/backup.log 2>&1
+
+# البديل الأنظف: ضع الأسرار في /etc/xcamp-gym.env (chmod 600) بصيغة KEY=VALUE،
+# ثم حمّلها قبل التشغيل (الاحتفاظ بآخر 30 نسخة هنا):
+# 30 2 * * *  cd /opt/xcamp-gym-sql && set -a && . /etc/xcamp-gym.env && set +a && NO_COLOR=1 BACKUP_KEEP=30 ./backup.sh >> logs/backup.log 2>&1
+
+# نسخة كل 6 ساعات (لأندية عالية النشاط):
+# 15 */6 * * *  cd /opt/xcamp-gym-sql && set -a && . /etc/xcamp-gym.env && set +a && NO_COLOR=1 ./backup.sh >> logs/backup.log 2>&1
+
+# مثال /etc/xcamp-gym.env :
+#   DB_HOST=127.0.0.1
+#   DB_PORT=3306
+#   DB_USER=appuser
+#   DB_PASS=strong-db-pass
+#   DB_NAME=xcamp_gym
+#   BACKUP_DIR=/var/backups/xcamp-gym

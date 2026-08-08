@@ -1,3 +1,6 @@
 # Runtime deploy logs (created by deploy.sh)
 logs/
 dashboard/uploads/
+
+# Database backup artifacts (created by backup.sh)
+backups/
