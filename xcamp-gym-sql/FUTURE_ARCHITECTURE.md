@@ -22,10 +22,12 @@
   و up/down. يحسّن التتبّع والتراجع مع نمو المخطط.
 
 ## 4. تضييق CSP (حذف `'unsafe-inline'`)
-- **الوضع الحالي:** CSP بأصول ذاتية لكنها تُبقي `'unsafe-inline'` لوجود ~20 معالجًا inline
-  (`onsubmit`/`onclick`) وأنماط inline وكتلة `page_script`/`page_styles`.
-- **مستقبلًا:** توليد nonce لكل طلب، نقل المعالجات إلى `addEventListener`، ثم استبدال
-  `'unsafe-inline'` بـ`'nonce-…'`. يرفع الحماية ضد XSS إلى الحد الأقصى دون مكتبات.
+- **الوضع الحالي:** CSP بأصول ذاتية «آمنة مبدئيًا» تُبقي `'unsafe-inline'` (ضروري: ~20
+  معالج inline + أنماط inline + كتلتا `<script>`) وبلا `'unsafe-eval'`. أداة قياس
+  Report-Only متاحة (`CSP_REPORT_ONLY=1` + `csp_report.php`).
+- **الخطة التفصيلية والمراحل:** انظر [`docs/csp-plan.md`](docs/csp-plan.md) — Stage 2 (nonces
+  للسكربت)، Stage 3 (ترحيل المعالجات إلى `addEventListener`)، Stage 4 (حذف `'unsafe-inline'`
+  من `script-src` والفرض). كل مرحلة تمرّ بـ Report-Only + اختبار كل الصفحات قبل الفرض.
 
 ## 5. Rate-limiter مركزي (DB/Redis)
 - **الوضع الحالي:** تقييد محاولات الدخول بتخزين ملفّي (`sys_get_temp_dir`) — best-effort،
