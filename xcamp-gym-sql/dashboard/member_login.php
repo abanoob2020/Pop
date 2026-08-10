@@ -37,6 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mem = $st->fetch();
         if (!$mem || !password_verify($pass, $mem['password_hash'])) {
             $rl[$key][] = time(); mrl_save($rl);
+            app_log('SECURITY', 'member_login_failed', ['id' => $id]);
             $left = MRL_MAX - count($rl[$key]);
             throw new RuntimeException('بيانات الدخول غير صحيحة.' . ($left > 0 ? " (متبقٍ {$left})" : ''));
         }
@@ -45,10 +46,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         db()->prepare("UPDATE member_auth SET last_login_at = NOW() WHERE member_id = ?")->execute([(int)$mem['member_id']]);
         session_regenerate_id(true);
         $_SESSION['member'] = ['member_id' => (int)$mem['member_id'], 'name' => $mem['full_name']];
+        app_log('INFO', 'member_login_success', ['member_id' => (int)$mem['member_id']]);
         header('Location: portal.php');
         exit;
     } catch (PDOException $e) {
-        $error = 'تعذّر الاتصال بقاعدة البيانات: ' . $e->getMessage();
+        error_log('[MEMBER_LOGIN][DB] ' . $e->getMessage());
+        $error = 'تعذّر إتمام العملية حاليًا. حاول لاحقًا.';   // رسالة عامة — لا تُكشف تفاصيل القاعدة
     } catch (Throwable $e) {
         $error = $e->getMessage();
     }

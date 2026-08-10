@@ -4,6 +4,80 @@
 // إعدادات الاتصال عبر متغيّرات البيئة: DB_HOST DB_PORT DB_NAME DB_USER DB_PASS
 // =============================================================================
 
+// ---- البيئة والأخطاء: لا تُكشف تفاصيل داخلية للمستخدم في الإنتاج ----
+// APP_DEBUG=1 يُظهر تفاصيل الأخطاء (للتطوير فقط)؛ الإنتاج الافتراضي يُخفيها ويسجّلها.
+function app_debug(): bool { return getenv('APP_DEBUG') === '1'; }
+
+error_reporting(E_ALL);
+ini_set('display_errors', app_debug() ? '1' : '0');
+ini_set('log_errors', '1');
+
+/** مجلّد السجلّات (خارج جذر الويب: xcamp-gym-sql/logs). */
+function app_log_dir(): string {
+    $d = getenv('APP_LOG_DIR') ?: dirname(__DIR__) . '/logs';
+    if (!is_dir($d)) @mkdir($d, 0770, true);
+    return $d;
+}
+
+/**
+ * سجلّ أمني/تشغيلي بمستويات (INFO/WARNING/ERROR/SECURITY).
+ * يحجب الحقول الحسّاسة تلقائيًا — لا يُسجّل كلمات مرور/رموز جلسة/CSRF/أسرار.
+ */
+function app_log(string $level, string $event, array $ctx = []): void {
+    foreach (['password','pass','csrf','token','password_hash','secret','api_key'] as $k) {
+        if (isset($ctx[$k])) $ctx[$k] = '***';
+    }
+    $rec = [
+        'ts'    => date('c'),
+        'level' => $level,
+        'event' => $event,
+        'ip'    => $_SERVER['REMOTE_ADDR'] ?? '-',
+        'uid'   => $_SESSION['user']['uid'] ?? ($_SESSION['member']['member_id'] ?? '-'),
+        'ctx'   => $ctx,
+    ];
+    @file_put_contents(app_log_dir() . '/security.log',
+        json_encode($rec, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n",
+        FILE_APPEND | LOCK_EX);
+}
+
+// شبكة أمان للأخطاء غير المُلتقطة: تُسجّل التفصيل داخليًا وتعرض رسالة عامة فقط.
+set_exception_handler(function (\Throwable $e): void {
+    error_log('[UNCAUGHT] ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+    if (!headers_sent()) http_response_code(500);
+    if (app_debug()) {
+        echo '<pre style="direction:ltr;white-space:pre-wrap">'
+           . htmlspecialchars((string)$e, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</pre>';
+    } else {
+        echo 'حدث خطأ غير متوقّع. تم تسجيل التفاصيل لدى النظام.';
+    }
+});
+register_shutdown_function(function (): void {
+    $e = error_get_last();
+    if ($e && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+        error_log('[FATAL] ' . $e['message'] . ' @ ' . $e['file'] . ':' . $e['line']);
+    }
+});
+
+// ترويسات أمان تُرسَل مع كل صفحة (قبل بدء الجلسة والإخراج). كل الأصول ذاتية (لا CDNs)،
+// ويُسمح بالـinline مؤقتًا لوجود أنماط/معالجات inline؛ تضييقه عبر nonces مُوثّق في
+// FUTURE_ARCHITECTURE.md.
+if (!headers_sent()) {
+    header('X-Frame-Options: DENY');
+    header('X-Content-Type-Options: nosniff');
+    header('Referrer-Policy: same-origin');
+    header('Permissions-Policy: geolocation=(), microphone=(), camera=()');
+    header(
+        "Content-Security-Policy: default-src 'self'; "
+        . "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+        . "img-src 'self' data:; font-src 'self'; object-src 'none'; "
+        . "base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+    );
+    $onHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+            || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https')
+            || ((int)($_SERVER['SERVER_PORT'] ?? 0) === 443);
+    if ($onHttps) header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+}
+
 // جلسة مُقوّاة: HttpOnly دائمًا، SameSite=Lax، وSecure تلقائيًا خلف HTTPS
 // (أو بفرضها عبر SESSION_SECURE=1 عند التشغيل خلف بروكسي TLS).
 if (session_status() === PHP_SESSION_NONE) {
@@ -46,7 +120,7 @@ if (!function_exists('mb_strimwidth')) {
 
 require_once __DIR__ . '/training.php';   // ذكاء الأحمال: دوال الحسابات التدريبية
 
-function h($v) { return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8'); }
+function h($v) { return htmlspecialchars((string)$v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 
 function db(): PDO {
     static $pdo = null;
@@ -55,10 +129,16 @@ function db(): PDO {
     $port = getenv('DB_PORT') ?: '3306';
     $name = getenv('DB_NAME') ?: 'xcamp_gym';
     $user = getenv('DB_USER') ?: 'xcamp_admin';
-    $pass = getenv('DB_PASS') !== false ? getenv('DB_PASS') : 'ChangeThisPass123';
+    // فشل مُغلق: لا كلمة مرور افتراضية في الشيفرة. يجب ضبط DB_PASS في البيئة
+    // (يُسمح بقيمة فارغة صريحة DB_PASS= لبيئات محلية موثوقة فقط).
+    $pass = getenv('DB_PASS');
+    if ($pass === false) {
+        throw new RuntimeException('DB_PASS غير مضبوط — عيّن متغيّر البيئة DB_PASS قبل التشغيل.');
+    }
     $pdo = new PDO("mysql:host=$host;port=$port;dbname=$name;charset=utf8mb4", $user, $pass, [
         PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES   => false,   // عبارات مُجهَّزة حقيقية
     ]);
     return $pdo;
 }
@@ -75,7 +155,13 @@ function require_login(): array {
 /** يتطلب دورًا معيّنًا؛ الكابتن يُحوَّل لصفحته المسموح بها */
 function require_role(array $roles): array {
     $u = require_login();
-    if (!in_array($u['role'], $roles, true)) { header('Location: captains.php'); exit; }
+    if (!in_array($u['role'], $roles, true)) {
+        app_log('SECURITY', 'permission_denied', [
+            'role' => $u['role'], 'need' => implode('|', $roles),
+            'uri'  => $_SERVER['REQUEST_URI'] ?? '',
+        ]);
+        header('Location: captains.php'); exit;
+    }
     return $u;
 }
 function is_manager(): bool {
@@ -418,15 +504,23 @@ function page_script(): void {
 }
 
 function db_error_box(string $msg): void {
+    // التفاصيل تُسجّل داخليًا فقط؛ لا تُكشف للمستخدم إلا في وضع التطوير.
+    error_log('[DB] ' . $msg);
+    app_log('ERROR', 'db_error', ['msg' => $msg]);
     ?>
     <div class="err">
       <strong>تعذّر الاتصال بقاعدة البيانات أو تنفيذ استعلام.</strong>
-      <code><?=h($msg)?></code>
-      <div style="margin-top:10px;font-size:13px">
-        أنشئ المستخدم وصلاحياته (مرة واحدة):<br>
-        <code>sudo mysql -e "CREATE USER IF NOT EXISTS 'xcamp_admin'@'localhost' IDENTIFIED BY 'MyPass123'; CREATE USER IF NOT EXISTS 'xcamp_admin'@'127.0.0.1' IDENTIFIED BY 'MyPass123'; CREATE USER IF NOT EXISTS 'xcamp_admin'@'%' IDENTIFIED BY 'MyPass123'; GRANT ALL PRIVILEGES ON xcamp_gym.* TO 'xcamp_admin'@'localhost'; GRANT ALL PRIVILEGES ON xcamp_gym.* TO 'xcamp_admin'@'127.0.0.1'; GRANT ALL PRIVILEGES ON xcamp_gym.* TO 'xcamp_admin'@'%'; FLUSH PRIVILEGES;"</code>
-        وفعّل الدخول: <code>sudo mysql xcamp_gym &lt; setup_logins.sql</code>
-      </div>
+      <?php if (app_debug()): ?>
+        <code><?=h($msg)?></code>
+        <div style="margin-top:10px;font-size:13px">
+          للتهيئة (تطوير): امنح مستخدم التطبيق صلاحيات <strong>محدودة</strong> على قاعدة
+          <code>xcamp_gym</code> فقط — لا تستخدم <code>GRANT ALL</code> في الإنتاج
+          (راجع <code>docs/deployment-security.md</code>)، ثم فعّل الدخول عبر
+          <code>php provision_admin.php</code>.
+        </div>
+      <?php else: ?>
+        <div style="margin-top:8px;font-size:13px">يرجى المحاولة لاحقًا أو التواصل مع مسؤول النظام.</div>
+      <?php endif; ?>
     </div>
     <?php
 }

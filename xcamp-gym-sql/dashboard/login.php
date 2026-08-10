@@ -7,7 +7,8 @@ require __DIR__ . '/db.php';
 
 if (current_user()) { header('Location: ' . (is_manager() ? 'index.php' : 'captains.php')); exit; }
 
-const RL_MAX = 5;          // أقصى محاولات فاشلة
+const RL_MAX = 5;          // أقصى محاولات فاشلة لكل (IP+بريد)
+const RL_IP_MAX = 20;      // أقصى محاولات فاشلة لكل IP عبر كل البُرد (ضد credential stuffing)
 const RL_WINDOW = 900;     // خلال 15 دقيقة
 
 function rl_file(): string { return sys_get_temp_dir() . '/xcamp_login_attempts.json'; }
@@ -28,11 +29,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         csrf_check();
         $email = trim($_POST['email'] ?? '');
         $pass  = (string)($_POST['password'] ?? '');
-        $key   = ($_SERVER['REMOTE_ADDR'] ?? '?') . '|' . mb_strtolower($email);
+        $ip    = ($_SERVER['REMOTE_ADDR'] ?? '?');
+        $key   = $ip . '|' . mb_strtolower($email);
 
         $rl = rl_load();
-        if (count($rl[$key] ?? []) >= RL_MAX) {
-            $wait = (int)ceil((RL_WINDOW - (time() - min($rl[$key]))) / 60);
+        // محاولات هذا الـIP عبر كل البُرد (سقف أعلى ضد credential stuffing).
+        $ipCount = 0;
+        foreach ($rl as $k => $times) if (strpos($k, $ip . '|') === 0) $ipCount += count($times);
+        if (count($rl[$key] ?? []) >= RL_MAX || $ipCount >= RL_IP_MAX) {
+            $ref  = $rl[$key] ?? [];
+            $wait = (int)ceil((RL_WINDOW - (time() - ($ref ? min($ref) : time()))) / 60);
+            app_log('SECURITY', 'login_throttled', ['email' => $email]);
             throw new RuntimeException("تم تجاوز عدد المحاولات المسموح. حاول مجددًا بعد نحو {$wait} دقيقة.");
         }
 
@@ -42,6 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$u || !password_verify($pass, $u['password_hash'])) {
             $rl[$key][] = time();
             rl_save($rl);
+            app_log('SECURITY', 'login_failed', ['email' => $email]);
             $left = RL_MAX - count($rl[$key]);
             throw new RuntimeException('بيانات الدخول غير صحيحة.' . ($left > 0 ? " (متبقٍ {$left} محاولات)" : ''));
         }
@@ -62,10 +70,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'role'     => $u['role'],
             'coach_id' => $coachId,
         ];
+        app_log('INFO', 'login_success', ['email' => $email, 'role' => $u['role']]);
         header('Location: ' . (is_manager() ? 'index.php' : 'captains.php'));
         exit;
     } catch (PDOException $e) {
-        $error = 'تعذّر الاتصال بقاعدة البيانات: ' . $e->getMessage();
+        error_log('[LOGIN][DB] ' . $e->getMessage());
+        $error = 'تعذّر إتمام العملية حاليًا. حاول لاحقًا.';   // رسالة عامة — لا تُكشف تفاصيل القاعدة
     } catch (Throwable $e) {
         $error = $e->getMessage();
     }
@@ -85,11 +95,13 @@ page_head('تسجيل الدخول');
         <input name="password" type="password" required style="width:100%;padding:9px 11px;border:1px solid #cbd5e1;border-radius:8px"></div>
       <button type="submit" style="background:#2563eb;color:#fff;border:0;padding:11px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer">دخول</button>
     </form>
+    <?php if (app_debug()): // تلميح بيانات الدخول التجريبية — لا يظهر في الإنتاج ?>
     <p class="muted" style="font-size:12px;margin-top:14px;line-height:1.7">
-      حسابات افتراضية (بعد تشغيل <code>setup_logins.sql</code>):<br>
+      حسابات تجريبية (نشر <code>DB_SEED=1</code>):<br>
       مدير: <code>admin@xcamp.com / admin123</code><br>
       كابتن: <code>coach1@xcamp.com / coach123</code>
     </p>
+    <?php endif; ?>
     <p class="muted" style="font-size:12px;margin-top:6px">عضو؟ ادخل بوابتك من <a class="link" href="member_login.php">هنا</a>.</p>
   </section>
 </div>
