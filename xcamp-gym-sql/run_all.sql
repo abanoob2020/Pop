@@ -22,6 +22,8 @@ SOURCE sql/16_assessments.sql;
 SOURCE sql/17_assessment_clinical.sql;
 SOURCE sql/18_recipes.sql;
 SOURCE sql/19_training_max.sql;
+-- بيانات تجريبية: بوابة العضو (member123). run_all منفذ العرض التجريبي الكامل.
+SOURCE sql/20_seed_demo_portal.sql;
 SOURCE sql/07_test_queries.sql;
 
 -- Restore the session state saved in 00_init.sql (valid here because run_all

@@ -9,11 +9,13 @@
 
 USE xcamp_gym;
 
+-- كلمات المرور التجريبية (bcrypt): admin123 / manager123 / coach123 / coach123.
+-- بيانات تجريبية فقط (هذا الملف يُحمّل تحت DB_SEED=1) — غيّرها أو انشر نظيفًا للإنتاج.
 INSERT INTO users (user_id, full_name, email, phone, password_hash, role, is_active, last_login_at) VALUES
-(1, 'Admin One', 'admin@xcamp.com', '01000000001', 'hash_admin', 'admin', 1, NOW()),
-(2, 'Manager One', 'manager@xcamp.com', '01000000002', 'hash_manager', 'manager', 1, NOW()),
-(3, 'Coach Ahmed', 'coach1@xcamp.com', '01000000003', 'hash_coach1', 'coach', 1, NOW()),
-(4, 'Coach Sara', 'coach2@xcamp.com', '01000000004', 'hash_coach2', 'coach', 1, NOW());
+(1, 'Admin One', 'admin@xcamp.com', '01000000001', '$2y$12$RrGRkAqREzWF31Z1L.FRneua5HLFQJW/qHFPGZeLB1t.bLHnZwr5q', 'admin', 1, NOW()),
+(2, 'Manager One', 'manager@xcamp.com', '01000000002', '$2y$12$s7TzCyg6z1wg99MMgmaBx.d9pp.lCFFp992LLFONgn4EKH1TO26Lq', 'manager', 1, NOW()),
+(3, 'Coach Ahmed', 'coach1@xcamp.com', '01000000003', '$2y$12$C9F8XLbd6J8eB05gPakyeOp1yv/d2837/lBzWw.N3I5EuhqSbZg1a', 'coach', 1, NOW()),
+(4, 'Coach Sara', 'coach2@xcamp.com', '01000000004', '$2y$12$ZdqpsAObsoTA.AS40U75zOg4STVcI0FQbn1GvDwSSkVlHo5EZOUgG', 'coach', 1, NOW());
 
 INSERT INTO coaches (coach_id, user_id, full_name, phone, specialty, active) VALUES
 (1, 3, 'Coach Ahmed', '01000000003', 'strength & fat loss', 1),
