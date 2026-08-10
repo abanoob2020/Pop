@@ -69,8 +69,13 @@ location ^~ /uploads/ {
 
 تُبعث مركزيًا من `db.php`: `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
 `Referrer-Policy: same-origin`, `Permissions-Policy`, و`Content-Security-Policy`
-(أصول ذاتية). ملاحظة: CSP تُبقي `'unsafe-inline'` مؤقتًا (أنماط/معالجات inline) —
-تضييقها عبر nonces مُخطَّط في `FUTURE_ARCHITECTURE.md`.
+(أصول ذاتية، بلا `'unsafe-eval'`). CSP تُبقي `'unsafe-inline'` مؤقتًا (ضروري: معالجات/أنماط
+inline).
+
+**تضييق CSP تدريجيًا (قياس قبل الفرض):** فعّل `CSP_REPORT_ONLY=1` في بيئة اختبار ليُبثّ
+رأس `Content-Security-Policy-Report-Only` بسياسة أصرم (بلا `unsafe-inline` للسكربت) دون
+منع أي شيء؛ تُجمع المخالفات في `logs/security.log` عبر `csp_report.php`. لا تفعّله في
+الإنتاج كإجراء دائم. الخطة الكاملة والمراحل: `docs/csp-plan.md`.
 
 ## 7. السجلّات والنسخ الاحتياطي
 
