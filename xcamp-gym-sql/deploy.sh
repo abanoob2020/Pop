@@ -43,6 +43,9 @@ FILES+=(
   "19_training_max.sql"
 )
 if [[ "$DB_SEED" != "0" ]]; then
+  # Demo-only portal logins (member123) + read-only verification queries. Both
+  # run after the feature migrations above, and only when seeding.
+  FILES+=("20_seed_demo_portal.sql")
   FILES+=("07_test_queries.sql")
 fi
 
