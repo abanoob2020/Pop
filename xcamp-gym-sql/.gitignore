@@ -1,6 +1,9 @@
 # Runtime deploy logs (created by deploy.sh)
 logs/
-dashboard/uploads/
+
+# Uploaded files are runtime data — ignore contents but keep the hardening .htaccess.
+dashboard/uploads/*
+!dashboard/uploads/.htaccess
 
 # Database backup artifacts (created by backup.sh)
 backups/

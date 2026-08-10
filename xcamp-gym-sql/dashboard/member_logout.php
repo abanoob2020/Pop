@@ -3,3 +3,4 @@
 require __DIR__ . '/db.php';
 unset($_SESSION['member']);
 header('Location: member_login.php');
+exit;

@@ -1,0 +1,12 @@
+# =============================================================================
+# دفاع في العمق: امنع تنفيذ أي سكربت داخل مجلد المرفوعات (Apache).
+# الملفات هنا صور فقط بامتدادات مفروضة خادِميًا؛ هذا حاجز إضافي ضد الرفع الخبيث.
+# لخوادم nginx راجع docs/deployment-security.md (location ~ \.php$ deny/return 403).
+# =============================================================================
+php_flag engine off
+<FilesMatch "\.(php|phar|phtml|php[0-9]|pl|py|cgi|sh|asp|aspx|jsp)$">
+    Require all denied
+</FilesMatch>
+Options -ExecCGI -Indexes
+RemoveHandler .php .phar .phtml
+AddType application/octet-stream .php .phar .phtml

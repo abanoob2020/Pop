@@ -153,6 +153,9 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $mime = (new finfo(FILEINFO_MIME_TYPE))->file($_FILES['photo']['tmp_name']);
                 $extMap = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
                 if (!isset($extMap[$mime])) throw new RuntimeException('صيغة الصورة غير مدعومة (jpg/png/webp فقط).');
+                // تحقّق إضافي أن المحتوى صورة نقطية صالحة فعلًا (يمنع ملفًا مُقنّعًا بترويسة صورة).
+                $dim = @getimagesize($_FILES['photo']['tmp_name']);
+                if ($dim === false) throw new RuntimeException('الملف ليس صورة صالحة.');
                 $dir = __DIR__ . '/uploads/progress';
                 if (!is_dir($dir) && !mkdir($dir, 0775, true)) throw new RuntimeException('تعذّر إنشاء مجلد الصور.');
                 $fname = 'm' . $targetMember . '_' . preg_replace('/[^0-9-]/', '', $_POST['record_date']) . '_' . bin2hex(random_bytes(4)) . '.' . $extMap[$mime];
