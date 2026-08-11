@@ -33,7 +33,8 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $dup->execute([$mid]); $already = $dup->fetchColumn();
         if ($already === false) {
             $pdo->prepare("INSERT INTO daily_attendance (member_id, coach_id, attendance_date, check_in_time, attended, session_type, notes)
-                           VALUES (?,?,CURDATE(),CURTIME(),1,'training','دخول عبر QR')")
+                           VALUES (?,?,CURDATE(),CURTIME(),1,'training','دخول عبر QR')
+                           ON DUPLICATE KEY UPDATE member_id = member_id")
                 ->execute([$mid, (int)$mem['coach_id'] ?: null]);
             $checkTime = date('H:i');
         } else {
