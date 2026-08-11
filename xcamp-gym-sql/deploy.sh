@@ -41,6 +41,9 @@ FILES+=(
   "17_assessment_clinical.sql"
   "18_recipes.sql"
   "19_training_max.sql"
+  "21_payment_idempotency.sql"
+  "22_attendance_unique.sql"
+  "23_perf_indexes.sql"
 )
 if [[ "$DB_SEED" != "0" ]]; then
   # Demo-only portal logins (member123) + read-only verification queries. Both

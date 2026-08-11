@@ -22,6 +22,10 @@ SOURCE sql/16_assessments.sql;
 SOURCE sql/17_assessment_clinical.sql;
 SOURCE sql/18_recipes.sql;
 SOURCE sql/19_training_max.sql;
+-- P0 hardening (إضافي): idempotency الدفع + UNIQUE الحضور + فهارس الأداء.
+SOURCE sql/21_payment_idempotency.sql;
+SOURCE sql/22_attendance_unique.sql;
+SOURCE sql/23_perf_indexes.sql;
 -- بيانات تجريبية: بوابة العضو (member123). run_all منفذ العرض التجريبي الكامل.
 SOURCE sql/20_seed_demo_portal.sql;
 SOURCE sql/07_test_queries.sql;
