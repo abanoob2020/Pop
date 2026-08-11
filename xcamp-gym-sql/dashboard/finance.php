@@ -70,10 +70,21 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
                            $_POST['spent_on'] ?: date('Y-m-d'), $uid]);
         } elseif ($act === 'record_membership_payment') {
             $msid = (int)$_POST['membership_id'];
-            // مفتاح idempotency من النموذج (hex) — يمنع ازدواج الدفعة عند نقر مزدوج/تحديث/
+            // مفتاح idempotency من النموذج — يمنع ازدواج الدفعة عند نقر مزدوج/تحديث/
             // إعادة محاولة/طلبات متزامنة (يُنفَّذ القيد على مستوى القاعدة uq_payments_idem).
-            $idem = preg_replace('/[^a-f0-9]/', '', (string)($_POST['idem'] ?? ''));
-            $idem = ($idem !== '') ? substr($idem, 0, 64) : null;
+            // (2) رفض المفاتيح الفارغة: بلا مفتاح لا حماية إطلاقًا (UNIQUE يسمح بـNULL متعدّد)،
+            // لذا يُرفض الطلب قبل أي إدراج بدل قبوله بصمت بلا حماية.
+            $idem = trim((string)($_POST['idempotency_key'] ?? ''));
+            if ($idem === '') {
+                http_response_code(400);
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode([
+                    'error'   => 'missing_idempotency_key',
+                    'message' => 'مفتاح التكرار (idempotency_key) مطلوب لكل طلب دفع.',
+                ], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            $idem = substr(preg_replace('/[^A-Za-z0-9]/', '', $idem), 0, 64);
             $q = $pdo->prepare("SELECT member_id FROM memberships WHERE membership_id = ?");
             $q->execute([$msid]); $mid = $q->fetchColumn();
             if ($mid === false) throw new RuntimeException('اشتراك غير موجود.');
@@ -100,9 +111,33 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->commit();
             } catch (PDOException $e) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
-                // ازدواج مفتاح idempotency = الدفعة سُجّلت سابقًا → نجاح idempotent بلا صفّ مكرّر.
-                if ($e->getCode() === '23000' && $idem !== null && strpos($e->getMessage(), 'uq_payments_idem') !== false) {
-                    header('Location: finance.php?ok=1&dup=1');
+                // (1) تصادم مفتاح idempotency: لا نعتبره نجاحًا تلقائيًا. نقرأ الدفعة المخزّنة
+                // بنفس المفتاح ونقارن حمولتها بالطلب الحالي:
+                //   • تطابق تام  → إعادة إرسال حقيقية ⇒ نجاح idempotent بلا صفّ مكرّر.
+                //   • أي اختلاف → مفتاح أُعيد استخدامه ببيانات مختلفة (مثال: زر الرجوع ثم تغيير
+                //     المبلغ) ⇒ لا نكتب شيئًا، ونُرجِع 409 صراحةً بدل «نجاح» مُضلِّل يُضيع الدفعة.
+                $isDupKey = ((int)($e->errorInfo[1] ?? 0) === 1062)
+                         && strpos((string)$e->getMessage(), 'uq_payments_idem') !== false;
+                if ($isDupKey) {
+                    $prev = $pdo->prepare("SELECT payment_id, member_id, membership_id, amount, method, status
+                                           FROM payments WHERE idempotency_key = ?");
+                    $prev->execute([$idem]);
+                    $row = $prev->fetch();
+                    $same = $row
+                        && (int)$row['member_id']     === (int)$mid
+                        && (int)$row['membership_id'] === (int)$msid
+                        && abs((float)$row['amount'] - (float)$payAmount) < 0.005
+                        && (string)$row['method']     === (string)$method;
+                    if ($same) {
+                        header('Location: finance.php?ok=1&dup=1&pid=' . (int)$row['payment_id']);
+                        exit;
+                    }
+                    http_response_code(409);
+                    header('Content-Type: application/json; charset=utf-8');
+                    echo json_encode([
+                        'error'   => 'duplicate_idempotency_key_mismatch',
+                        'message' => 'تم استخدام مفتاح التكرار مع بيانات مختلفة. الرجاء التحقق من الدفعة السابقة أو استخدام مفتاح جديد.',
+                    ], JSON_UNESCAPED_UNICODE);
                     exit;
                 }
                 throw $e;
@@ -200,7 +235,7 @@ $ecatLabel= ['rent'=>'إيجار','salaries'=>'رواتب','equipment'=>'معد�
   <?php if (!$dueMs): ?><div class="empty">لا توجد اشتراكات غير محصّلة 🎉</div><?php else: ?>
     <form class="frm" method="post"><?=csrf_field()?>
       <input type="hidden" name="action" value="record_membership_payment">
-      <input type="hidden" name="idem" value="<?=bin2hex(random_bytes(16))?>">
+      <input type="hidden" name="idempotency_key" value="<?=bin2hex(random_bytes(16))?>">
       <div style="grid-column:span 2"><label>العضو / الاشتراك</label><select name="membership_id" onchange="var o=this.options[this.selectedIndex];document.getElementById('mpay').value=o.dataset.price;">
         <?php foreach ($dueMs as $d): ?><option value="<?=(int)$d['membership_id']?>" data-price="<?=h($d['price'])?>"><?=h($d['full_name'])?> — <?=h($d['plan_name'])?> (<?=h($d['payment_status'])?>)</option><?php endforeach; ?>
       </select></div>

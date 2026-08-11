@@ -86,6 +86,9 @@ unset($r);
 // بمبالغها الحقيقية، ويستبعد ما عُلّم «paid» يدويًا بلا صف دفع (نقدي/مجاملة/معفى).
 // ملاحظة: علم payment_status يبقى كما هو للاستخدام التشغيلي (بوّابة الدخول/الاحتفاظ/
 // المتعثّرات/التجديد) — هذا الإصلاح لا يمسّه.
+// TODO: handle refunds if status 'refunded' is ever used
+// (تحقّق وقت المراجعة: لا توجد صفوف status='refunded' في القاعدة ولا مسار كود يكتبها،
+//  فحساب صافي الإيراد بطرح المستردّات غير مطلوب الآن؛ يُضاف عند تفعيل الاسترداد فعليًا.)
 $collScope = $isCoach ? ' AND m.coach_id = ' . $myCoach : '';
 $collected = (float)$pdo->query(
     "SELECT COALESCE(SUM(pay.amount), 0)
