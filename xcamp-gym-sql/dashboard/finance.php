@@ -72,9 +72,11 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $msid = (int)$_POST['membership_id'];
             // مفتاح idempotency من النموذج — يمنع ازدواج الدفعة عند نقر مزدوج/تحديث/
             // إعادة محاولة/طلبات متزامنة (يُنفَّذ القيد على مستوى القاعدة uq_payments_idem).
-            // (2) رفض المفاتيح الفارغة: بلا مفتاح لا حماية إطلاقًا (UNIQUE يسمح بـNULL متعدّد)،
-            // لذا يُرفض الطلب قبل أي إدراج بدل قبوله بصمت بلا حماية.
-            $idem = trim((string)($_POST['idempotency_key'] ?? ''));
+            // (2) رفض المفاتيح الفارغة: بلا مفتاح لا حماية إطلاقًا. **التطبيع أولًا ثم الفحص** —
+            // لأن قيمة مثل "!!!" تجتاز فحص الفراغ الخام ثم تُطبَّع إلى "" فتصل القاعدة فارغة،
+            // و"" ليست NULL فيسري عليها UNIQUE: تخزّنها أول دفعة، ثم تصطدم بها كل دفعة مشروعة
+            // لاحقة بمفتاح مماثل فتُحجب بـ409. لذا نُطبّع ثم نرفض كل ما يؤول إلى فراغ.
+            $idem = substr(preg_replace('/[^A-Za-z0-9]/', '', (string)($_POST['idempotency_key'] ?? '')), 0, 64);
             if ($idem === '') {
                 http_response_code(400);
                 header('Content-Type: application/json; charset=utf-8');
@@ -84,7 +86,6 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 ], JSON_UNESCAPED_UNICODE);
                 exit;
             }
-            $idem = substr(preg_replace('/[^A-Za-z0-9]/', '', $idem), 0, 64);
             $q = $pdo->prepare("SELECT member_id FROM memberships WHERE membership_id = ?");
             $q->execute([$msid]); $mid = $q->fetchColumn();
             if ($mid === false) throw new RuntimeException('اشتراك غير موجود.');
