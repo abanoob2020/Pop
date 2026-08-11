@@ -70,6 +70,10 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
                            $_POST['spent_on'] ?: date('Y-m-d'), $uid]);
         } elseif ($act === 'record_membership_payment') {
             $msid = (int)$_POST['membership_id'];
+            // مفتاح idempotency من النموذج (hex) — يمنع ازدواج الدفعة عند نقر مزدوج/تحديث/
+            // إعادة محاولة/طلبات متزامنة (يُنفَّذ القيد على مستوى القاعدة uq_payments_idem).
+            $idem = preg_replace('/[^a-f0-9]/', '', (string)($_POST['idem'] ?? ''));
+            $idem = ($idem !== '') ? substr($idem, 0, 64) : null;
             $q = $pdo->prepare("SELECT member_id FROM memberships WHERE membership_id = ?");
             $q->execute([$msid]); $mid = $q->fetchColumn();
             if ($mid === false) throw new RuntimeException('اشتراك غير موجود.');
@@ -85,14 +89,24 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $promoRow = $ev['row']; $discount = $ev['discount']; $payAmount = $ev['final'];
                 $note .= ' (كود ' . $promoRow['code'] . ' −' . money($discount) . ')';
             }
-            $pdo->beginTransaction();
-            // يُسجَّل في جدول payments الأصلي بالمخطط
-            $pdo->prepare("INSERT INTO payments (member_id, membership_id, payment_date, amount, method, status, notes)
-                           VALUES (?,?, NOW(), ?, ?, 'paid', ?)")
-                ->execute([(int)$mid, $msid, $payAmount, $method, $note]);
-            $pdo->prepare("UPDATE memberships SET payment_status = 'paid' WHERE membership_id = ?")->execute([$msid]);
-            if ($promoRow) discount_redeem($pdo, $promoRow, 'membership', $amount, $discount, (int)$mid);
-            $pdo->commit();
+            try {
+                $pdo->beginTransaction();
+                // يُسجَّل في جدول payments الأصلي بالمخطط (مع مفتاح idempotency)
+                $pdo->prepare("INSERT INTO payments (member_id, membership_id, payment_date, amount, method, status, notes, idempotency_key)
+                               VALUES (?,?, NOW(), ?, ?, 'paid', ?, ?)")
+                    ->execute([(int)$mid, $msid, $payAmount, $method, $note, $idem]);
+                $pdo->prepare("UPDATE memberships SET payment_status = 'paid' WHERE membership_id = ?")->execute([$msid]);
+                if ($promoRow) discount_redeem($pdo, $promoRow, 'membership', $amount, $discount, (int)$mid);
+                $pdo->commit();
+            } catch (PDOException $e) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                // ازدواج مفتاح idempotency = الدفعة سُجّلت سابقًا → نجاح idempotent بلا صفّ مكرّر.
+                if ($e->getCode() === '23000' && $idem !== null && strpos($e->getMessage(), 'uq_payments_idem') !== false) {
+                    header('Location: finance.php?ok=1&dup=1');
+                    exit;
+                }
+                throw $e;
+            }
         }
         header('Location: finance.php?ok=1');
         exit;
@@ -186,6 +200,7 @@ $ecatLabel= ['rent'=>'إيجار','salaries'=>'رواتب','equipment'=>'معد�
   <?php if (!$dueMs): ?><div class="empty">لا توجد اشتراكات غير محصّلة 🎉</div><?php else: ?>
     <form class="frm" method="post"><?=csrf_field()?>
       <input type="hidden" name="action" value="record_membership_payment">
+      <input type="hidden" name="idem" value="<?=bin2hex(random_bytes(16))?>">
       <div style="grid-column:span 2"><label>العضو / الاشتراك</label><select name="membership_id" onchange="var o=this.options[this.selectedIndex];document.getElementById('mpay').value=o.dataset.price;">
         <?php foreach ($dueMs as $d): ?><option value="<?=(int)$d['membership_id']?>" data-price="<?=h($d['price'])?>"><?=h($d['full_name'])?> — <?=h($d['plan_name'])?> (<?=h($d['payment_status'])?>)</option><?php endforeach; ?>
       </select></div>
