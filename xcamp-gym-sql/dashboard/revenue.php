@@ -53,7 +53,7 @@ $rows = $pdo->query("SELECT ms.membership_id, ms.member_id, ms.end_date, ms.rene
                      $scope ORDER BY ms.end_date")->fetchAll();
 
 $today = new DateTimeImmutable('today');
-$mrr = 0.0; $activeValue = 0.0; $outstanding = 0.0; $collected = 0.0;
+$mrr = 0.0; $activeValue = 0.0; $outstanding = 0.0;
 $proj = ['30' => 0.0, '60' => 0.0, '90' => 0.0];
 $renewPipe = [];    // اشتراكات تنتهي/منتهية بانتظار قرار التجديد
 foreach ($rows as &$r) {
@@ -68,7 +68,6 @@ foreach ($rows as &$r) {
     $isCurrent = $days >= 0 && $r['renewal_status'] !== 'cancelled';
     if ($isCurrent) { $mrr += $r['monthly']; $activeValue += $price; }
     $outstanding += $r['owed'];
-    if ($r['payment_status'] === 'paid') $collected += $price;
     // الإيراد المتوقّع من التجديدات القادمة (نافذة الأيام)
     if ($days >= 0) {
         foreach ([30, 60, 90] as $win) if ($days <= $win) $proj[(string)$win] += $price * $r['likelihood'];
@@ -80,6 +79,25 @@ foreach ($rows as &$r) {
     if (($days <= 30 && $r['renewal_status'] !== 'renewed' && $r['renewal_status'] !== 'cancelled')) $renewPipe[] = $r;
 }
 unset($r);
+
+// ── المحصّل النقدي (BIZ-001 / Model B): الحقيقة المالية من جدول payments، لا من علم
+// memberships.payment_status. «المحصّل» = مجموع المبالغ المدفوعة فعليًا (status='paid')
+// ضمن نفس نطاق التقرير (أعضاء الكابتن أو الكل). يشمل الدفعات الجزئية/المتعدّدة/الزائدة
+// بمبالغها الحقيقية، ويستبعد ما عُلّم «paid» يدويًا بلا صف دفع (نقدي/مجاملة/معفى).
+// ملاحظة: علم payment_status يبقى كما هو للاستخدام التشغيلي (بوّابة الدخول/الاحتفاظ/
+// المتعثّرات/التجديد) — هذا الإصلاح لا يمسّه.
+// TODO: handle refunds if status 'refunded' is ever used
+// (تحقّق وقت المراجعة: لا توجد صفوف status='refunded' في القاعدة ولا مسار كود يكتبها،
+//  فحساب صافي الإيراد بطرح المستردّات غير مطلوب الآن؛ يُضاف عند تفعيل الاسترداد فعليًا.)
+$collScope = $isCoach ? ' AND m.coach_id = ' . $myCoach : '';
+$collected = (float)$pdo->query(
+    "SELECT COALESCE(SUM(pay.amount), 0)
+       FROM payments pay
+       JOIN memberships ms ON ms.membership_id = pay.membership_id
+       JOIN members m      ON m.member_id = ms.member_id
+      WHERE pay.status = 'paid'" . $collScope
+)->fetchColumn();
+
 usort($renewPipe, fn($a, $b) => $a['days_left'] <=> $b['days_left']);
 $outRows = array_values(array_filter($rows, fn($r) => $r['owed'] > 0));
 usort($outRows, fn($a, $b) => $b['owed'] <=> $a['owed']);
@@ -104,10 +122,15 @@ function mlink($r) { return 'captains.php?coach=' . (int)($r['coach_id'] ?? 0) .
   <h2>📊 مؤشرات الإيراد</h2>
   <div class="kpis">
     <div class="card" style="--c:#2563eb"><div class="n" style="color:#2563eb;font-size:24px"><?=money($mrr)?></div><div class="l">💳 الإيراد الشهري المتكرّر (MRR)</div></div>
-    <div class="card" style="--c:#16a34a"><div class="n" style="color:#16a34a;font-size:24px"><?=money($activeValue)?></div><div class="l">📦 قيمة العقود السارية</div></div>
-    <div class="card" style="--c:#dc2626"><div class="n" style="color:#dc2626;font-size:24px"><?=money($outstanding)?></div><div class="l">⚠️ مستحقّات غير محصّلة</div></div>
-    <div class="card" style="--c:#0891b2"><div class="n" style="color:#0891b2;font-size:24px"><?=money($collected)?></div><div class="l">✅ محصّل (مدفوع)</div></div>
+    <div class="card" style="--c:#16a34a"><div class="n" style="color:#16a34a;font-size:24px"><?=money($activeValue)?></div><div class="l">📦 قيمة العقود السارية (متعاقَد)</div></div>
+    <div class="card" style="--c:#dc2626"><div class="n" style="color:#dc2626;font-size:24px"><?=money($outstanding)?></div><div class="l">⚠️ مستحقّات مقدّرة (مستحقّ)</div></div>
+    <div class="card" style="--c:#0891b2"><div class="n" style="color:#0891b2;font-size:24px"><?=money($collected)?></div><div class="l">✅ محصّل نقدًا (من المدفوعات)</div></div>
   </div>
+  <p class="muted" style="font-size:11px;margin:8px 0 0">
+    تمييز المفاهيم: <strong>المتعاقَد</strong> (MRR/قيمة العقود) = قيمة تعاقدية متوقّعة ·
+    <strong>المستحقّ</strong> = تقدير تشغيلي لما لم يُحصَّل (من حالة الدفع) ·
+    <strong>المحصّل نقدًا</strong> = مبالغ فعلية من جدول <code>payments</code> (لا يُحسب من علم الحالة).
+  </p>
   <div style="border:1px solid #eef2f7;border-radius:10px;padding:14px;margin-top:8px">
     <strong style="font-size:13px;color:#334155">الإيراد المتوقّع من التجديدات (مرجّح باحتمال التجديد)</strong>
     <div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:10px">

@@ -70,6 +70,22 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
                            $_POST['spent_on'] ?: date('Y-m-d'), $uid]);
         } elseif ($act === 'record_membership_payment') {
             $msid = (int)$_POST['membership_id'];
+            // مفتاح idempotency من النموذج — يمنع ازدواج الدفعة عند نقر مزدوج/تحديث/
+            // إعادة محاولة/طلبات متزامنة (يُنفَّذ القيد على مستوى القاعدة uq_payments_idem).
+            // (2) رفض المفاتيح الفارغة: بلا مفتاح لا حماية إطلاقًا. **التطبيع أولًا ثم الفحص** —
+            // لأن قيمة مثل "!!!" تجتاز فحص الفراغ الخام ثم تُطبَّع إلى "" فتصل القاعدة فارغة،
+            // و"" ليست NULL فيسري عليها UNIQUE: تخزّنها أول دفعة، ثم تصطدم بها كل دفعة مشروعة
+            // لاحقة بمفتاح مماثل فتُحجب بـ409. لذا نُطبّع ثم نرفض كل ما يؤول إلى فراغ.
+            $idem = substr(preg_replace('/[^A-Za-z0-9]/', '', (string)($_POST['idempotency_key'] ?? '')), 0, 64);
+            if ($idem === '') {
+                http_response_code(400);
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode([
+                    'error'   => 'missing_idempotency_key',
+                    'message' => 'مفتاح التكرار (idempotency_key) مطلوب لكل طلب دفع.',
+                ], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
             $q = $pdo->prepare("SELECT member_id FROM memberships WHERE membership_id = ?");
             $q->execute([$msid]); $mid = $q->fetchColumn();
             if ($mid === false) throw new RuntimeException('اشتراك غير موجود.');
@@ -85,14 +101,48 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $promoRow = $ev['row']; $discount = $ev['discount']; $payAmount = $ev['final'];
                 $note .= ' (كود ' . $promoRow['code'] . ' −' . money($discount) . ')';
             }
-            $pdo->beginTransaction();
-            // يُسجَّل في جدول payments الأصلي بالمخطط
-            $pdo->prepare("INSERT INTO payments (member_id, membership_id, payment_date, amount, method, status, notes)
-                           VALUES (?,?, NOW(), ?, ?, 'paid', ?)")
-                ->execute([(int)$mid, $msid, $payAmount, $method, $note]);
-            $pdo->prepare("UPDATE memberships SET payment_status = 'paid' WHERE membership_id = ?")->execute([$msid]);
-            if ($promoRow) discount_redeem($pdo, $promoRow, 'membership', $amount, $discount, (int)$mid);
-            $pdo->commit();
+            try {
+                $pdo->beginTransaction();
+                // يُسجَّل في جدول payments الأصلي بالمخطط (مع مفتاح idempotency)
+                $pdo->prepare("INSERT INTO payments (member_id, membership_id, payment_date, amount, method, status, notes, idempotency_key)
+                               VALUES (?,?, NOW(), ?, ?, 'paid', ?, ?)")
+                    ->execute([(int)$mid, $msid, $payAmount, $method, $note, $idem]);
+                $pdo->prepare("UPDATE memberships SET payment_status = 'paid' WHERE membership_id = ?")->execute([$msid]);
+                if ($promoRow) discount_redeem($pdo, $promoRow, 'membership', $amount, $discount, (int)$mid);
+                $pdo->commit();
+            } catch (PDOException $e) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                // (1) تصادم مفتاح idempotency: لا نعتبره نجاحًا تلقائيًا. نقرأ الدفعة المخزّنة
+                // بنفس المفتاح ونقارن حمولتها بالطلب الحالي:
+                //   • تطابق تام  → إعادة إرسال حقيقية ⇒ نجاح idempotent بلا صفّ مكرّر.
+                //   • أي اختلاف → مفتاح أُعيد استخدامه ببيانات مختلفة (مثال: زر الرجوع ثم تغيير
+                //     المبلغ) ⇒ لا نكتب شيئًا، ونُرجِع 409 صراحةً بدل «نجاح» مُضلِّل يُضيع الدفعة.
+                $isDupKey = ((int)($e->errorInfo[1] ?? 0) === 1062)
+                         && strpos((string)$e->getMessage(), 'uq_payments_idem') !== false;
+                if ($isDupKey) {
+                    $prev = $pdo->prepare("SELECT payment_id, member_id, membership_id, amount, method, status
+                                           FROM payments WHERE idempotency_key = ?");
+                    $prev->execute([$idem]);
+                    $row = $prev->fetch();
+                    $same = $row
+                        && (int)$row['member_id']     === (int)$mid
+                        && (int)$row['membership_id'] === (int)$msid
+                        && abs((float)$row['amount'] - (float)$payAmount) < 0.005
+                        && (string)$row['method']     === (string)$method;
+                    if ($same) {
+                        header('Location: finance.php?ok=1&dup=1&pid=' . (int)$row['payment_id']);
+                        exit;
+                    }
+                    http_response_code(409);
+                    header('Content-Type: application/json; charset=utf-8');
+                    echo json_encode([
+                        'error'   => 'duplicate_idempotency_key_mismatch',
+                        'message' => 'تم استخدام مفتاح التكرار مع بيانات مختلفة. الرجاء التحقق من الدفعة السابقة أو استخدام مفتاح جديد.',
+                    ], JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+                throw $e;
+            }
         }
         header('Location: finance.php?ok=1');
         exit;
@@ -186,6 +236,7 @@ $ecatLabel= ['rent'=>'إيجار','salaries'=>'رواتب','equipment'=>'معد�
   <?php if (!$dueMs): ?><div class="empty">لا توجد اشتراكات غير محصّلة 🎉</div><?php else: ?>
     <form class="frm" method="post"><?=csrf_field()?>
       <input type="hidden" name="action" value="record_membership_payment">
+      <input type="hidden" name="idempotency_key" value="<?=bin2hex(random_bytes(16))?>">
       <div style="grid-column:span 2"><label>العضو / الاشتراك</label><select name="membership_id" onchange="var o=this.options[this.selectedIndex];document.getElementById('mpay').value=o.dataset.price;">
         <?php foreach ($dueMs as $d): ?><option value="<?=(int)$d['membership_id']?>" data-price="<?=h($d['price'])?>"><?=h($d['full_name'])?> — <?=h($d['plan_name'])?> (<?=h($d['payment_status'])?>)</option><?php endforeach; ?>
       </select></div>

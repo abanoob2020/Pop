@@ -398,7 +398,8 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
             // (حضور: onboarding->active / at_risk->reactivated + حلّ إنذارات الحضور؛
             //  غياب: بعد 3 غيابات في 7 أيام -> إنذار + مهمة + at_risk)
             $pdo->prepare("INSERT INTO daily_attendance (member_id, coach_id, attendance_date, check_in_time, check_out_time, attended, session_type, notes)
-                           VALUES (?,?,?,?,?,?,?,?)")->execute([
+                           VALUES (?,?,?,?,?,?,?,?)
+                           ON DUPLICATE KEY UPDATE member_id = member_id")->execute([
                 $targetMember, (int)$_POST['coach_id'] ?: null, $_POST['attendance_date'],
                 $_POST['check_in_time'] ?: null, $_POST['check_out_time'] ?: null,
                 (int)$_POST['attended'], trim($_POST['session_type'] ?? '') ?: null,

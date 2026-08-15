@@ -68,7 +68,8 @@ if ($pdo && !$error && $sess && !$denied && $_SERVER['REQUEST_METHOD'] === 'POST
                 $dup->execute([(int)$sess['member_id'], $sess['session_date']]);
                 if (!$dup->fetchColumn()) {
                     $pdo->prepare("INSERT INTO daily_attendance (member_id, coach_id, attendance_date, check_in_time, attended, session_type, notes)
-                                   VALUES (?,?,?,CURTIME(),1,'training','سُجّل تلقائيًا من وضع بدء الجلسة')")
+                                   VALUES (?,?,?,CURTIME(),1,'training','سُجّل تلقائيًا من وضع بدء الجلسة')
+                                   ON DUPLICATE KEY UPDATE member_id = member_id")
                         ->execute([(int)$sess['member_id'], (int)$sess['member_coach'] ?: null, $sess['session_date']]);
                 }
             }
