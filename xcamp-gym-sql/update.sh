@@ -7,9 +7,10 @@
 #
 # الاستخدام:
 #   ./update.sh                 # سحب أحدث كود + (إعادة) تشغيل السيرفر
-#   ./update.sh --deploy        # + إعادة نشر السكيمة والبيانات (deploy.sh)
-#   ./update.sh --reset         # + إعادة بناء قاعدة البيانات من الصفر (reset_and_deploy.sh)
+#   ./update.sh --deploy        # + تشغيل migrations الآمنة (deploy.sh --migrate)
 #   ./update.sh --no-server     # سحب الكود فقط بدون تشغيل السيرفر
+#
+# للبناء من الصفر (dev فقط): استخدم dev_reset_DESTRUCTIVE.sh مباشرةً.
 #
 # متغيّرات البيئة (نفس deploy.sh + خيارات السيرفر):
 #   DB_HOST DB_PORT DB_USER DB_PASS DB_NAME
@@ -30,15 +31,16 @@ DASH_DIR="$ROOT_DIR/dashboard"
 : "${SERVE_PORT:=8000}"
 
 DO_DEPLOY=0
-DO_RESET=0
 DO_SERVER=1
 for arg in "$@"; do
   case "$arg" in
     --deploy)    DO_DEPLOY=1 ;;
-    --reset)     DO_RESET=1 ;;
+    --reset)
+      echo "ERROR: --reset removed. Use dev_reset_DESTRUCTIVE.sh directly for dev resets." >&2
+      exit 1 ;;
     --no-server) DO_SERVER=0 ;;
     -h|--help)
-      sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) echo "خيار غير معروف: $arg (جرّب --help)" >&2; exit 1 ;;
   esac
@@ -72,16 +74,11 @@ else
 fi
 
 # --- 2) قاعدة البيانات (اختياري) --------------------------------------------
-if [[ "$DO_RESET" -eq 1 ]]; then
-  log_info "إعادة بناء قاعدة البيانات من الصفر (reset_and_deploy.sh) ..."
+if [[ "$DO_DEPLOY" -eq 1 ]]; then
+  log_info "تشغيل migrations آمنة (deploy.sh --migrate) ..."
   DB_HOST="$DB_HOST" DB_PORT="$DB_PORT" DB_USER="$DB_USER" DB_PASS="$DB_PASS" DB_NAME="$DB_NAME" \
-    bash "$ROOT_DIR/reset_and_deploy.sh"
-  log_ok "أُعيد بناء قاعدة البيانات."
-elif [[ "$DO_DEPLOY" -eq 1 ]]; then
-  log_info "إعادة نشر السكيمة والبيانات (deploy.sh) ..."
-  DB_HOST="$DB_HOST" DB_PORT="$DB_PORT" DB_USER="$DB_USER" DB_PASS="$DB_PASS" DB_NAME="$DB_NAME" \
-    bash "$ROOT_DIR/deploy.sh"
-  log_ok "أُعيد نشر قاعدة البيانات."
+    bash "$ROOT_DIR/deploy.sh" --migrate
+  log_ok "اكتملت التحديثات."
 else
   log_info "بدون تغيير في قاعدة البيانات (ذكاء الأحمال لا يحتاج migration). استخدم --deploy أو --reset عند الحاجة."
 fi
