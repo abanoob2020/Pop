@@ -40,7 +40,7 @@ xcamp-gym-sql/
 │  ├─ 06_seed_data.sql     # بيانات اختبارية بمعرّفات ثابتة
 │  └─ 07_test_queries.sql  # استعلامات تحقق للقراءة فقط
 ├─ deploy.sh               # نشر الملفات بالترتيب عبر TCP
-├─ reset_and_deploy.sh     # حذف القاعدة وإعادة إنشائها ثم النشر
+├─ dev_reset_DESTRUCTIVE.sh # حذف القاعدة وإعادة بنائها (dev فقط، يتطلب XCAMP_DEV_RESET=1)
 ├─ run_all.sql             # تشغيل كل الملفات داخل جلسة mysql واحدة
 ├─ backup.sh               # نسخة احتياطية مضغوطة (mysqldump) + تشذيب
 ├─ restore.sh              # استعادة من نسخة (.sql.gz) مع تأكيد
@@ -65,21 +65,21 @@ xcamp-gym-sql/
 2. امنح سكربتات bash صلاحية التنفيذ:
 
    ```bash
-   chmod +x deploy.sh reset_and_deploy.sh
+   chmod +x deploy.sh dev_reset_DESTRUCTIVE.sh
    ```
 
 3. شغّل النشر:
 
    ```bash
-   DB_USER=root DB_PASS='your_password' ./deploy.sh
+   DB_USER=root DB_PASS='your_password' ./deploy.sh --bootstrap
    ```
 
-### Option 2: Full reset and deploy
+### Option 2: Full reset (dev only)
 
 إذا أردت إعادة بناء القاعدة من الصفر (حذف ثم إعادة إنشاء ثم نشر):
 
 ```bash
-DB_USER=root DB_PASS='your_password' ./reset_and_deploy.sh
+XCAMP_DEV_RESET=1 DB_USER=root DB_PASS='your_password' ./dev_reset_DESTRUCTIVE.sh
 ```
 
 ### Option 3: mysql client (run_all.sql)
@@ -219,13 +219,15 @@ FORCE=1 ./restore.sh --latest                            # بلا سؤال تأ�
 
 - كل ملف قابل لإعادة التشغيل: الكائنات تُحذف ثم تُنشأ (`DROP ... IF EXISTS`).
 - لتعديل المخطط أو المنطق، عدّل الملف المناسب داخل `sql/` وأعد النشر.
-- لإعادة تهيئة كاملة أثناء التطوير، استخدم `reset_and_deploy.sh`.
+- لإعادة تهيئة كاملة أثناء التطوير، استخدم `dev_reset_DESTRUCTIVE.sh` (يتطلب `XCAMP_DEV_RESET=1`).
+- لتحديث الإنتاج بأمان، استخدم `deploy.sh --migrate` (يأخذ نسخة احتياطية أولًا).
 - سجلّات النشر في `logs/deploy.log`.
 
 ## ملاحظات مهمة
 
-- `deploy.sh` يتأكد أولًا من وجود كل ملفات SQL قبل التنفيذ.
-- `reset_and_deploy.sh` يحذف القاعدة ويعيد إنشاءها ثم يستدعي `deploy.sh`.
+- `deploy.sh` يتطلب `--bootstrap` أو `--migrate` — لن يعمل بدون وضع صريح.
+- `deploy.sh --migrate` يرفض أي ملف يحتوي `DROP TABLE` أو `TRUNCATE` ويأخذ نسخة احتياطية إلزامية.
+- `dev_reset_DESTRUCTIVE.sh` يحذف القاعدة ويعيد بناءها (dev فقط، يتطلب `XCAMP_DEV_RESET=1`).
 - إن لم ترد ألوانًا، استخدم `NO_COLOR=1`.
 - إن لم ترد كلمة المرور في الأمر، استخدم `mysql_config_editor` أو ملف إعدادات
   محلي (مثل `~/.my.cnf`).

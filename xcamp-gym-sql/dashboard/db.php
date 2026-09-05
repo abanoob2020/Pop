@@ -58,20 +58,31 @@ register_shutdown_function(function (): void {
     }
 });
 
-// ترويسات أمان تُرسَل مع كل صفحة (قبل بدء الجلسة والإخراج). كل الأصول ذاتية (لا CDNs)،
-// ويُسمح بالـinline مؤقتًا لوجود أنماط/معالجات inline؛ تضييقه عبر nonces مُوثّق في
-// FUTURE_ARCHITECTURE.md.
+// ترويسات أمان تُرسَل مع كل صفحة (قبل بدء الجلسة والإخراج). كل الأصول ذاتية (لا CDNs).
+// CSP: السياسة المُطبَّقة «آمنة مبدئيًا» — تُبقي 'unsafe-inline' لأنه **ضروري** (٢٠ معالج
+// inline + أنماط inline + كتلتا <script> في page_script/checkin)، وبلا 'unsafe-eval'
+// إطلاقًا. التضييق **تدريجي بالأدلّة**: فعّل CSP_REPORT_ONLY=1 لبثّ سياسة أصرم في وضع
+// «تقرير فقط» (لا يمنع شيئًا) وتُجمع المخالفات عبر csp_report.php. الخطة: docs/csp-plan.md.
 if (!headers_sent()) {
     header('X-Frame-Options: DENY');
     header('X-Content-Type-Options: nosniff');
     header('Referrer-Policy: same-origin');
     header('Permissions-Policy: geolocation=(), microphone=(), camera=()');
-    header(
-        "Content-Security-Policy: default-src 'self'; "
-        . "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
-        . "img-src 'self' data:; font-src 'self'; object-src 'none'; "
-        . "base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
-    );
+
+    $cspBase = "default-src 'self'; img-src 'self' data:; font-src 'self'; "
+             . "connect-src 'self'; object-src 'none'; base-uri 'self'; "
+             . "form-action 'self'; frame-ancestors 'none'";
+    // المُطبَّقة (لا تكسر شيئًا): inline مسموح للسكربت والنمط.
+    header("Content-Security-Policy: script-src 'self' 'unsafe-inline'; "
+         . "style-src 'self' 'unsafe-inline'; $cspBase");
+
+    // وضع القياس (اختياري، لا يمنع): الهدف الأصرم — script-src بلا 'unsafe-inline'
+    // ليكشف بالضبط أي سكربتات/معالجات inline تحتاج ترحيلًا (nonces) قبل الفرض.
+    if (getenv('CSP_REPORT_ONLY') === '1') {
+        header("Content-Security-Policy-Report-Only: script-src 'self'; "
+             . "style-src 'self' 'unsafe-inline'; $cspBase; report-uri /csp_report.php");
+    }
+
     $onHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
             || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https')
             || ((int)($_SERVER['SERVER_PORT'] ?? 0) === 443);
