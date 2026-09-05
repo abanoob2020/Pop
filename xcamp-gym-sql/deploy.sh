@@ -78,12 +78,7 @@ if [[ "$DB_SEED" != "0" ]]; then
   BOOTSTRAP_FILES+=("06_seed_data.sql")
 fi
 
-MIGRATE_FILES=(
-  "02_procedures.sql"
-  "03_triggers.sql"
-  "04_events.sql"
-  "05_views.sql"
-)
+MIGRATE_FILES=()
 
 ADDITIVE_FILES=(
   "08_workout_v2.sql"
@@ -145,6 +140,18 @@ SERVER_CMD=(mysql --protocol=tcp -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER"
   --default-character-set=utf8mb4)
 if [[ -n "$DB_PASS" ]]; then
   SERVER_CMD+=(--password="$DB_PASS")
+fi
+
+# ── Bootstrap guard: refuse on a populated database ──────────────────────────
+if [[ "$MODE" == "bootstrap" ]]; then
+  tbl_count=$("${SERVER_CMD[@]}" -N -e \
+    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$DB_NAME'" 2>/dev/null || echo 0)
+  if [[ "$tbl_count" -gt 0 ]]; then
+    log_err "REFUSED: '$DB_NAME' has $tbl_count tables — --bootstrap is for EMPTY databases only."
+    log_err "For dev resets use dev_reset_DESTRUCTIVE.sh (drops the DB first)."
+    log_err "For production upgrades use --migrate."
+    exit 1
+  fi
 fi
 
 # ── Mandatory backup before migrate ──────────────────────────────────────────

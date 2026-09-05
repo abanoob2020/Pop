@@ -10,8 +10,6 @@
 -- Exit: any rows returned = reparenting detected.
 -- =============================================================================
 
-USE xcamp_gym;
-
 SELECT '=== REPARENTING CHECK ===' AS status;
 
 -- ── 01_tables.sql FK relationships ──────────────────────────────────────────
@@ -163,9 +161,9 @@ SELECT 'program_templates → coaches (08)' AS relationship,
 FROM program_templates pt JOIN coaches c ON c.coach_id = pt.created_by
 WHERE pt.created_at < c.created_at;
 
-SELECT 'training_maxes → members (19)' AS relationship,
+SELECT 'training_max → members (19)' AS relationship,
        tm.max_id, tm.created_at AS child_created, m.created_at AS parent_created
-FROM training_maxes tm JOIN members m ON m.member_id = tm.member_id
+FROM training_max tm JOIN members m ON m.member_id = tm.member_id
 WHERE tm.created_at < m.created_at;
 
 SELECT '=== CHECK COMPLETE ===' AS status;
