@@ -1,0 +1,19 @@
+[project]
+name = "xcamp-fitness-os"
+version = "1.0.0"
+description = "XCAMP Fitness OS - canonical PostgreSQL schema (SQLAlchemy 2.x + Alembic). Staging only."
+requires-python = ">=3.11"
+dependencies = [
+    "SQLAlchemy>=2.0,<2.1",
+    "alembic>=1.13,<2.0",
+    "psycopg[binary]>=3.1",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-ra -q"
