@@ -1,4 +1,4 @@
-# XCAMP Fitness OS — Canonical Schema v1.0 (Staging Only)
+# XCAMP Fitness OS — Canonical Schema + Walking Skeleton (Staging Only)
 
 A **new, self-contained** PostgreSQL data layer for the XCAMP Fitness OS
 Canonical Data Model v1.0, built with **SQLAlchemy 2.x + Alembic**. It lives
@@ -9,6 +9,10 @@ application. It does not modify, read from a write path into, or otherwise touch
 > Scope guard: this package is **staging only**. It contains no production
 > migration path, no frontend, no AI, no MCP, no auto-collector, and no MOS
 > client. See [`docs/SCHEMA_GATE.md`](docs/SCHEMA_GATE.md) for the review gate.
+
+Project authority, scope, and the single active mission are defined in
+[`docs/PROJECT_CONSTITUTION.md`](docs/PROJECT_CONSTITUTION.md) and
+[`docs/STATUS.md`](docs/STATUS.md). Those files supersede older chat summaries.
 
 ## Layout
 
@@ -26,6 +30,8 @@ fitness-os/
 │  ├─ helpers.py               # shared column builders
 │  └─ versions/001..012_*.py   # one migration per canonical domain
 ├─ tests/                      # schema, FK, uniqueness, versioning, MOS guard…
+├─ examples/                   # synthetic input only; no production member data
+├─ app/walking_skeleton/       # deterministic calibration pipeline + CLI
 ├─ scripts/
 │  ├─ print_target.py          # print host/db/user (no password) + guard
 │  └─ migrate_staging.sh       # guarded `alembic upgrade head`
@@ -97,6 +103,21 @@ export FITNESS_TEST_ADMIN_URL="postgresql+psycopg://postgres@127.0.0.1:5432/post
 export FITNESS_TEST_DB_NAME=xcamp_os_test
 python -m pytest
 ```
+
+## Walking Skeleton v0.1
+
+Run the synthetic, read-only calibration path:
+
+```bash
+python -m app.walking_skeleton.cli examples/mos_snapshot.sample.json \
+  --output-dir .local/walking-skeleton-runs
+```
+
+The command produces canonical JSON. Re-running the same snapshot under the
+same policy is a no-op with the same run id and bytes. This harness does not
+connect to MOS or write to the operational database. Its pilot thresholds are
+not production policy; see
+[`docs/missions/M-001_WALKING_SKELETON.md`](docs/missions/M-001_WALKING_SKELETON.md).
 
 ## Not in scope (hard stop)
 
