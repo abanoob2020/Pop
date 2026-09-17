@@ -10,13 +10,16 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-SCHEMA_VERSION = "xcamp.walking-skeleton.v1"
+SCHEMA_VERSION = "xcamp.walking-skeleton.v2"
+ENGINE_VERSION = "calibration.2"
 POLICY_VERSION = "retention-pilot.v0.1"
 RUN_NAMESPACE = uuid.UUID("e39d3845-1c83-5108-bf1d-7a67431dfed1")
 MEMBER_NAMESPACE = uuid.UUID("491b23f6-7182-5bfe-91f2-4c897cae66d3")
@@ -37,19 +40,21 @@ class PilotPolicy:
     owner_role: str = "retention_desk"
 
     def __post_init__(self) -> None:
-        if self.attendance_gap_days < 1:
+        if type(self.attendance_gap_days) is not int or self.attendance_gap_days < 1:
             raise ValueError("attendance_gap_days must be positive")
-        if self.renewal_window_days < 1:
+        if type(self.renewal_window_days) is not int or self.renewal_window_days < 1:
             raise ValueError("renewal_window_days must be positive")
-        if not self.owner_role.strip():
+        if not isinstance(self.owner_role, str) or not self.owner_role.strip():
             raise ValueError("owner_role must not be empty")
+        if not isinstance(self.version, str) or not self.version.strip():
+            raise ValueError("version must not be empty")
 
 
 def canonical_json_bytes(value: Any) -> bytes:
     """Return stable UTF-8 JSON suitable for hashing and byte comparison."""
 
     return (
-        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+        json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False, separators=(",", ":")) + "\n"
     ).encode("utf-8")
 
 
@@ -103,11 +108,28 @@ def _unique_by(rows: list[Mapping[str, Any]], key: str, context: str) -> None:
 
 
 def _normalize(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(snapshot, Mapping):
+        raise SnapshotValidationError("snapshot must be an object")
     snapshot_id = _require_text(snapshot, "snapshot_id", "snapshot")
     observed_at = _parse_datetime(snapshot.get("observed_at"), "snapshot.observed_at")
     as_of = _parse_datetime(snapshot.get("as_of"), "snapshot.as_of")
     if observed_at > as_of:
         raise SnapshotValidationError("snapshot.observed_at cannot be after snapshot.as_of")
+    timezone_name = snapshot.get("timezone", "UTC")
+    try:
+        ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, TypeError, ValueError) as exc:
+        raise SnapshotValidationError("snapshot.timezone must be an IANA timezone") from exc
+    coverage = snapshot.get("attendance_coverage")
+    if coverage is not None:
+        if not isinstance(coverage, Mapping) or type(coverage.get("complete")) is not bool:
+            raise SnapshotValidationError("attendance_coverage requires boolean complete")
+        start = _parse_datetime(coverage.get("from"), "attendance_coverage.from")
+        through = _parse_datetime(coverage.get("through"), "attendance_coverage.through")
+        if not start <= through <= observed_at:
+            raise SnapshotValidationError("attendance coverage must end by observed_at")
+        coverage = {"from": start.isoformat(), "through": through.isoformat(),
+                    "complete": coverage["complete"]}
 
     members = _require_list(snapshot, "members")
     memberships = _require_list(snapshot, "memberships")
@@ -124,7 +146,7 @@ def _normalize(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             {
                 "external_id": external_id,
                 "member_id": str(uuid.uuid5(MEMBER_NAMESPACE, f"MOS/member/{external_id}")),
-                "status": str(row.get("status", "active")).strip().lower(),
+                "status": _require_text(row, "status", "member").lower(),
             }
         )
 
@@ -147,9 +169,19 @@ def _normalize(snapshot: Mapping[str, Any]) -> dict[str, Any]:
                 "expiry_date": _parse_date(
                     row.get("expiry_date"), f"memberships[{index}].expiry_date"
                 ).isoformat(),
-                "status": str(row.get("status", "active")).strip().lower(),
+                "status": _require_text(row, "status", "membership").lower(),
             }
         )
+
+    for row in normalized_members:
+        if row["status"] not in {"active", "inactive"}:
+            raise SnapshotValidationError("unsupported member status")
+    for row in normalized_memberships:
+        if row["status"] not in {"active", "expired", "cancelled", "transfered",
+                                 "freezed", "postponed", "suspended"}:
+            raise SnapshotValidationError("unsupported membership status")
+        if row["start_date"] > row["expiry_date"]:
+            raise SnapshotValidationError("membership starts after expiry")
 
     normalized_attendance = []
     for index, row in enumerate(attendance):
@@ -165,6 +197,8 @@ def _normalize(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             raise SnapshotValidationError(
                 f"attendance[{index}].checked_in_at cannot be after snapshot.as_of"
             )
+        if checked_in_at > observed_at:
+            raise SnapshotValidationError("attendance event cannot be after observed_at")
         normalized_attendance.append(
             {
                 "external_event_id": _require_text(
@@ -179,6 +213,8 @@ def _normalize(snapshot: Mapping[str, Any]) -> dict[str, Any]:
         "snapshot_id": snapshot_id,
         "observed_at": observed_at.isoformat().replace("+00:00", "Z"),
         "as_of": as_of.isoformat().replace("+00:00", "Z"),
+        "timezone": timezone_name,
+        "attendance_coverage": coverage,
         "members": sorted(normalized_members, key=lambda row: row["external_id"]),
         "memberships": sorted(
             normalized_memberships, key=lambda row: row["external_membership_id"]
@@ -189,7 +225,8 @@ def _normalize(snapshot: Mapping[str, Any]) -> dict[str, Any]:
 
 def _evaluate(normalized: Mapping[str, Any], policy: PilotPolicy) -> list[dict[str, Any]]:
     as_of = _parse_datetime(normalized["as_of"], "normalized.as_of")
-    as_of_date = as_of.date()
+    as_of_date = as_of.astimezone(ZoneInfo(normalized["timezone"])).date()
+    coverage = normalized["attendance_coverage"]
     memberships_by_member: dict[str, list[Mapping[str, Any]]] = {}
     attendance_by_member: dict[str, list[datetime]] = {}
 
@@ -209,6 +246,7 @@ def _evaluate(normalized: Mapping[str, Any], policy: PilotPolicy) -> list[dict[s
             row
             for row in memberships_by_member.get(external_id, [])
             if row["status"] == "active"
+            and row["start_date"] <= as_of_date.isoformat() <= row["expiry_date"]
         ]
         if not active_memberships:
             continue
@@ -220,11 +258,29 @@ def _evaluate(normalized: Mapping[str, Any], policy: PilotPolicy) -> list[dict[s
             reasons.append({"code": "RENEWAL_DUE", "days_to_expiry": days_to_expiry})
 
         visits = attendance_by_member.get(external_id, [])
-        if visits:
+        coverage_ok = bool(coverage and coverage["complete"] and
+            _parse_datetime(coverage["through"], "through") >= as_of and
+            _parse_datetime(coverage["from"], "from") <= as_of - timedelta(days=policy.attendance_gap_days))
+        current_start = min(_parse_date(row["start_date"], "start") for row in active_memberships)
+        current_start_at = datetime.combine(current_start, datetime.min.time(),
+                                            ZoneInfo(normalized["timezone"]))
+        visits = [visit for visit in visits if visit >= current_start_at and (
+            not coverage or visit >= _parse_datetime(coverage["from"], "from"))]
+        attendance_state = "unavailable_missing_or_incomplete_coverage"
+        if coverage_ok and visits:
             last_visit = max(visits)
             gap_days = (as_of - last_visit).days
             if gap_days >= policy.attendance_gap_days:
                 reasons.append({"code": "ATTENDANCE_GAP", "days_since_visit": gap_days})
+            attendance_state = "evaluated"
+        elif coverage_ok:
+            # No observed visits does NOT prove never attended. Report only the
+            # lower bound on a fully covered period within the current episode.
+            since = max(current_start_at, _parse_datetime(coverage["from"], "from"))
+            gap_days = (as_of - since).days
+            if gap_days >= policy.attendance_gap_days:
+                reasons.append({"code": "ATTENDANCE_GAP", "no_visits_in_covered_days": gap_days})
+            attendance_state = "evaluated"
 
         if not reasons:
             continue
@@ -237,6 +293,7 @@ def _evaluate(normalized: Mapping[str, Any], policy: PilotPolicy) -> list[dict[s
             {
                 "member_id": member["member_id"],
                 "member_external_id": external_id,
+                "attendance_evaluation": attendance_state,
                 "reasons": sorted(reasons, key=lambda row: row["code"]),
                 "risk_score": score,
                 "severity": "high" if score >= 80 else "medium",
@@ -253,7 +310,7 @@ def build_run(snapshot: Mapping[str, Any], policy: PilotPolicy | None = None) ->
     input_hash = _hash(normalized)
     policy_data = asdict(selected_policy)
     policy_hash = _hash(policy_data)
-    run_id = str(uuid.uuid5(RUN_NAMESPACE, f"{input_hash}:{policy_hash}"))
+    run_id = str(uuid.uuid5(RUN_NAMESPACE, f"{ENGINE_VERSION}:{SCHEMA_VERSION}:{input_hash}:{policy_hash}"))
     decisions = _evaluate(normalized, selected_policy)
     as_of = _parse_datetime(normalized["as_of"], "normalized.as_of")
 
@@ -304,6 +361,17 @@ def build_run(snapshot: Mapping[str, Any], policy: PilotPolicy | None = None) ->
 
     return {
         "schema_version": SCHEMA_VERSION,
+        "engine_version": ENGINE_VERSION,
+        "limitations": [
+            "Task IDs are run-scoped drafts, not cross-snapshot operational deduplication.",
+            "No outcome or incremental revenue attribution is implemented.",
+        ],
+        "attendance_evaluation": "available" if (
+            normalized["attendance_coverage"] and normalized["attendance_coverage"]["complete"]
+            and _parse_datetime(normalized["attendance_coverage"]["through"], "through") >= as_of
+            and _parse_datetime(normalized["attendance_coverage"]["from"], "from") <=
+                as_of - timedelta(days=selected_policy.attendance_gap_days)
+        ) else "unavailable_missing_or_incomplete_coverage",
         "run_id": run_id,
         "mode": "calibration_only",
         "source": {"system": "MOS", "access": "supplied_snapshot_read_only"},
@@ -326,6 +394,8 @@ def persist_run(run: Mapping[str, Any], output_dir: str | os.PathLike[str]) -> t
     """Atomically persist canonical output; identical retries are no-ops."""
 
     run_id = _require_text(run, "run_id", "run")
+    if str(uuid.UUID(run_id)) != run_id:
+        raise ValueError("run_id must be a canonical UUID")
     destination_dir = Path(output_dir)
     destination_dir.mkdir(parents=True, exist_ok=True)
     destination = destination_dir / f"{run_id}.json"
@@ -336,7 +406,20 @@ def persist_run(run: Mapping[str, Any], output_dir: str | os.PathLike[str]) -> t
             raise RuntimeError(f"idempotency violation for existing run {run_id}")
         return destination, "unchanged"
 
-    temporary = destination.with_suffix(".tmp")
-    temporary.write_bytes(content)
-    os.replace(temporary, destination)
-    return destination, "created"
+    # Publish using a no-clobber hard link, so concurrent writers cannot replace
+    # a different artifact sharing this identity. Never overwrite existing data.
+    with tempfile.NamedTemporaryFile(dir=destination_dir, delete=False) as handle:
+        temporary = Path(handle.name)
+        handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
+    try:
+        try:
+            os.link(temporary, destination)
+            return destination, "created"
+        except FileExistsError:
+            if destination.read_bytes() != content:
+                raise RuntimeError(f"idempotency violation for existing run {run_id}")
+            return destination, "unchanged"
+    finally:
+        temporary.unlink()

@@ -17,7 +17,10 @@ Claims about migration `0013` or `53/53` tests are not present on the verified r
 
 [`M-001 — Walking Skeleton v0.1`](missions/M-001_WALKING_SKELETON.md)
 
-Current phase: implementation and CI verification complete; awaiting owner decision on real-data calibration.
+Current phase: M-001 renewal-only retrospective calibration. Attendance calibration
+is blocked pending timestamped per-member check-ins and verified coverage.
+The owner requested continuation on 2026-09-17. This permits offline calibration,
+not production policy promotion, merge, deployment, or member contact.
 
 ## Scope state
 
@@ -46,6 +49,17 @@ Current phase: implementation and CI verification complete; awaiting owner decis
 - Local deterministic/unit/MOS-isolation checks: `12 passed`.
 - Full PostgreSQL-backed suite: `33 passed` in GitHub Actions run `35240983855`.
 - Remote mission commit: `1795dfe8ed7c47e944d01802d6b3e307a34b5384`.
+
+### Calibration hardening (current changes)
+
+- Explicit missing/incomplete attendance coverage blocks absence evaluation, not renewal evaluation.
+- Current membership eligibility uses business-local dates; frozen/expired/future-only episodes are excluded.
+- Missing dates quarantine the entire member in the analysis adapter.
+- Runtime identity includes engine/schema versions. Existing published artifacts are never overwritten.
+- Concurrent persistence and threshold-boundary tests are included.
+- Original `33 passed` evidence applies only to the original implementation; this revision requires its own CI run.
+- Real calibration results and all member data remain private and outside this public repository.
+- M-002 is not started; M-001's full attendance calibration gate is still open.
 
 ## Decision log
 

@@ -1,6 +1,7 @@
 {
   "snapshot_id": "mos-export-2026-09-16",
-  "observed_at": "2026-09-16T21:00:00Z",
+  "observed_at": "2026-09-17T00:00:00Z",
+  "attendance_coverage": {"complete": true, "from": "2026-08-01T00:00:00Z", "through": "2026-09-17T00:00:00Z"},
   "as_of": "2026-09-17T00:00:00Z",
   "members": [
     {"external_id": "1001", "status": "active"},

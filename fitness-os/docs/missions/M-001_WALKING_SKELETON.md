@@ -1,6 +1,6 @@
 # Mission M-001 — Walking Skeleton v0.1
 
-Status: implementation and CI complete; awaiting owner review.
+Status: renewal-only retrospective calibration; full attendance gate remains blocked.
 
 ## Objective
 
@@ -32,7 +32,27 @@ These thresholds are test policy, not final business policy. Promotion requires 
 - [x] MOS access is supplied-snapshot/read-only; no client or write path exists.
 - [x] Unit tests cover the success path and injected negative cases.
 - [x] Clean CI run passes the full PostgreSQL-backed suite (`33 passed`).
-- [ ] Owner accepts or rejects the pilot thresholds for real-data calibration.
+- [x] Owner requests continuation with offline real-data calibration (2026-09-17).
+- [ ] Timestamped member check-ins and complete coverage available for absence calibration.
+- [ ] Owner approves thresholds for operational use. No such approval is inferred from calibration.
+
+## Data quality extension
+
+Absence evaluation now requires declared complete attendance coverage through
+the evaluation instant and for at least the threshold window. Missing coverage
+is unavailable, not zero risk. A never-observed visit is only flagged over the
+fully covered interval inside the current subscription episode. Renewal remains
+independently evaluable when absence is unavailable.
+
+Membership dates are inclusive business-local dates. The pilot excludes frozen,
+suspended, expired and future-only subscriptions. Future contracts still require
+manual review before contact. Scores are heuristic test weights, not calibrated
+probabilities. Draft tasks are run-scoped, not persistent operational tasks.
+
+The workbook adapter inherits the prior workbook's conservative core-product
+classification and quarantines members with missing episode dates. Its synthetic
+export-row identifiers and date-only analysis anchor must not be promoted into a
+production MOS connector. Results never prove revenue recovered or causal lift.
 
 ## Exit gate
 
