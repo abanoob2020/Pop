@@ -1,0 +1,66 @@
+name: Fitness OS CI
+
+on:
+  pull_request:
+    paths:
+      - "fitness-os/**"
+      - ".github/workflows/fitness-os-ci.yml"
+      - "CLAUDE.md"
+  push:
+    branches:
+      - main
+      - "codex/**"
+      - "claude/xcamp-fitness-os-schema-3tk05h"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    defaults:
+      run:
+        working-directory: fitness-os
+
+    env:
+      FITNESS_TEST_ADMIN_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres
+      FITNESS_TEST_DB_NAME: xcamp_os_test
+      FITNESS_DB_HOST: 127.0.0.1
+      FITNESS_DB_PORT: "5432"
+      FITNESS_DB_USER: xcamp_app
+      FITNESS_DB_PASSWORD: xcamp_test
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: fitness-os/requirements.txt
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Create least-privilege test role
+        working-directory: .
+        env:
+          PGPASSWORD: postgres
+        run: >-
+          psql -h 127.0.0.1 -U postgres -d postgres
+          -v ON_ERROR_STOP=1
+          -c "CREATE ROLE xcamp_app LOGIN PASSWORD 'xcamp_test' NOSUPERUSER NOCREATEDB NOCREATEROLE;"
+      - name: Run full test suite
+        run: python -m pytest

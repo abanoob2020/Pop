@@ -1,0 +1,21 @@
+{
+  "snapshot_id": "mos-export-2026-09-16",
+  "observed_at": "2026-09-17T00:00:00Z",
+  "attendance_coverage": {"complete": true, "from": "2026-08-01T00:00:00Z", "through": "2026-09-17T00:00:00Z"},
+  "as_of": "2026-09-17T00:00:00Z",
+  "members": [
+    {"external_id": "1001", "status": "active"},
+    {"external_id": "1002", "status": "active"},
+    {"external_id": "1003", "status": "inactive"}
+  ],
+  "memberships": [
+    {"external_membership_id": "m-1001", "member_external_id": "1001", "start_date": "2026-06-30", "expiry_date": "2026-09-30", "status": "active"},
+    {"external_membership_id": "m-1002", "member_external_id": "1002", "start_date": "2026-09-01", "expiry_date": "2026-12-01", "status": "active"},
+    {"external_membership_id": "m-1003", "member_external_id": "1003", "start_date": "2026-06-01", "expiry_date": "2026-09-20", "status": "active"}
+  ],
+  "attendance": [
+    {"external_event_id": "a-1001-1", "member_external_id": "1001", "checked_in_at": "2026-09-01T18:00:00Z"},
+    {"external_event_id": "a-1002-1", "member_external_id": "1002", "checked_in_at": "2026-09-15T18:00:00Z"},
+    {"external_event_id": "a-1003-1", "member_external_id": "1003", "checked_in_at": "2026-08-01T18:00:00Z"}
+  ]
+}
