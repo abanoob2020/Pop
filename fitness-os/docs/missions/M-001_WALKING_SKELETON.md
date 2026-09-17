@@ -1,6 +1,6 @@
 # Mission M-001 — Walking Skeleton v0.1
 
-Status: implementation complete; awaiting CI and owner review.
+Status: implementation and CI complete; awaiting owner review.
 
 ## Objective
 
@@ -31,7 +31,7 @@ These thresholds are test policy, not final business policy. Promotion requires 
 - [x] Every decision includes reason codes and policy identity.
 - [x] MOS access is supplied-snapshot/read-only; no client or write path exists.
 - [x] Unit tests cover the success path and injected negative cases.
-- [ ] Clean CI run passes the full PostgreSQL-backed suite.
+- [x] Clean CI run passes the full PostgreSQL-backed suite (`33 passed`).
 - [ ] Owner accepts or rejects the pilot thresholds for real-data calibration.
 
 ## Exit gate

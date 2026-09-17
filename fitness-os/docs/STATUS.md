@@ -17,7 +17,7 @@ Claims about migration `0013` or `53/53` tests are not present on the verified r
 
 [`M-001 — Walking Skeleton v0.1`](missions/M-001_WALKING_SKELETON.md)
 
-Current phase: implementation and verification.
+Current phase: implementation and CI verification complete; awaiting owner decision on real-data calibration.
 
 ## Scope state
 
@@ -40,6 +40,12 @@ Current phase: implementation and verification.
 2. No named task assignee directory exists in the active Fitness OS layer.
 3. Pilot thresholds require calibration on current real data before production approval.
 4. PR #44 is not yet merged; this mission must preserve a clean dependency on that baseline.
+
+## Verification evidence
+
+- Local deterministic/unit/MOS-isolation checks: `12 passed`.
+- Full PostgreSQL-backed suite: `33 passed` in GitHub Actions run `35240983855`.
+- Remote mission commit: `1795dfe8ed7c47e944d01802d6b3e307a34b5384`.
 
 ## Decision log
 
