@@ -15,6 +15,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $new2 = (string)($_POST['confirm_password'] ?? '');
         if (strlen($new) < 8) throw new RuntimeException('كلمة المرور الجديدة يجب ألا تقل عن 8 أحرف.');
         if ($new !== $new2) throw new RuntimeException('تأكيد كلمة المرور غير مطابق.');
+        assert_password_not_compromised($new);
 
         $st = db()->prepare("SELECT password_hash FROM users WHERE user_id = ?");
         $st->execute([$me['uid']]);

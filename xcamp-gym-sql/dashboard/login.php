@@ -53,6 +53,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $left = RL_MAX - count($rl[$key]);
             throw new RuntimeException('بيانات الدخول غير صحيحة.' . ($left > 0 ? " (متبقٍ {$left} محاولات)" : ''));
         }
+        if (is_compromised_password($pass) && !compromised_login_allowed()) {
+            // كلمة المرور صحيحة لكنها مسرّبة علنًا → الحساب مقفول حتى تُدار كلمة جديدة من CLI.
+            app_log('SECURITY', 'login_blocked_compromised_password', ['email' => $email]);
+            throw new RuntimeException('هذا الحساب مقفول: كلمة مروره مسرّبة. يجب على المسؤول تعيين كلمة جديدة عبر provision_admin.php.');
+        }
         unset($rl[$key]);
         rl_save($rl);
 

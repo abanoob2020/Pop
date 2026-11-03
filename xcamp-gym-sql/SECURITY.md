@@ -38,6 +38,31 @@
 4. **استعادة:** من نسخة نظيفة (`restore.sh`) إن لزم.
 5. **توثيق:** سجّل السبب الجذري والإجراء التصحيحي.
 
+## قفل بيانات الدخول المسرّبة (xcamp)
+
+كلمات المرور التجريبية (`admin123` / `manager123` / `coach123` / `member123`) وأمثلة
+قديمة منشورة في المستودع وتسرّبت في محادثات سابقة، لذا تُعامل كمُخترَقة
+(`dashboard/compromised.php`):
+
+- **الدخول مقفول بها** (موظّفين + أعضاء) حتى لو طابقت الهاش — إلا في تطوير محلي
+  صريح `APP_DEBUG=1`. كل محاولة تُسجّل `login_blocked_compromised_password`.
+- **ممنوع اختيارها** كلمةً جديدة في `account.php` و`captains.php` و`provision_admin.php`.
+- أضف أي كلمة مرور تسرّبت لاحقًا عبر `COMPROMISED_PASSWORDS` (فواصل) أو
+  `COMPROMISED_PASSWORDS_FILE` (سطر لكل كلمة، `chmod 600`) — لا تضعها في Git.
+- فكّ القفل عن حساب: `php provision_admin.php --email=… --pass='<كلمة جديدة قوية>'`.
+
+### أسرار خارجية يجب تدويرها يدويًا (خارج هذا المستودع)
+
+لا يحتوي المستودع (ولا تاريخ Git) على مفاتيح Claude/ElevenLabs/تيليجرام، لكنها تسرّبت
+على جهاز جهة العمل وفي محادثات، فتُلغى من لوحة كل مزوّد ثم تُنشأ بديلة في البيئة فقط:
+
+| السر | أين يُلغى |
+|---|---|
+| Claude API key | console.anthropic.com → API Keys → Delete، ثم مراجعة Usage |
+| ElevenLabs API key | elevenlabs.io → Profile/API Keys → Regenerate |
+| Telegram bot token | `@BotFather` → `/revoke` (ثم `/token`)، وراجع `getWebhookInfo` |
+| xcamp logins + `DB_PASS` | `provision_admin.php` لكل حساب + `ALTER USER … IDENTIFIED BY …` |
+
 ## المراجع
 
 - تقرير المراجعة الكامل: `docs/security-audit.md`

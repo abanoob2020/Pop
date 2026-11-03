@@ -41,6 +41,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $left = MRL_MAX - count($rl[$key]);
             throw new RuntimeException('بيانات الدخول غير صحيحة.' . ($left > 0 ? " (متبقٍ {$left})" : ''));
         }
+        if (is_compromised_password($pass) && !compromised_login_allowed()) {
+            app_log('SECURITY', 'member_login_blocked_compromised_password', ['member_id' => (int)$mem['member_id']]);
+            throw new RuntimeException('بوابتك مقفولة لأن كلمة مرورها مسرّبة. راجع الاستقبال لتعيين كلمة جديدة.');
+        }
         if (!$mem['portal_enabled']) throw new RuntimeException('بوابتك غير مُفعّلة — راجع الاستقبال.');
         unset($rl[$key]); mrl_save($rl);
         db()->prepare("UPDATE member_auth SET last_login_at = NOW() WHERE member_id = ?")->execute([(int)$mem['member_id']]);
