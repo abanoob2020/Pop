@@ -118,6 +118,7 @@ if (!function_exists('mb_strimwidth')) {
     }
 }
 
+require_once __DIR__ . '/compromised.php'; // قفل كلمات المرور المسرّبة
 require_once __DIR__ . '/training.php';   // ذكاء الأحمال: دوال الحسابات التدريبية
 
 function h($v) { return htmlspecialchars((string)$v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }

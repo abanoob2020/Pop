@@ -23,6 +23,8 @@ $fail = function (string $m) { fwrite(STDERR, "خطأ: $m\n"); exit(1); };
 
 if (!filter_var($email, FILTER_VALIDATE_EMAIL)) $fail('بريد إلكتروني غير صالح (--email).');
 if (strlen($pass) < 8) $fail('كلمة المرور يجب أن تكون 8 أحرف على الأقل (--pass).');
+require_once __DIR__ . '/compromised.php';
+if (is_compromised_password($pass)) $fail('كلمة المرور هذه مُسرّبة/معروفة علنًا — اختر كلمة أخرى (--pass).');
 if (!in_array($role, $ROLES, true)) $fail('الدور يجب أن يكون: ' . implode(' / ', $ROLES) . ' (--role).');
 
 $host = getenv('DB_HOST') ?: '127.0.0.1';

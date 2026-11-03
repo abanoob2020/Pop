@@ -196,6 +196,7 @@ if ($pdo && !$error && $_SERVER['REQUEST_METHOD'] === 'POST') {
             // تفعيل/إعادة تعيين كلمة مرور بوابة العضو
             $pw = (string)($_POST['portal_password'] ?? '');
             if (strlen($pw) < 6) throw new RuntimeException('كلمة مرور البوابة يجب أن تكون 6 أحرف على الأقل.');
+            assert_password_not_compromised($pw);
             $hash = password_hash($pw, PASSWORD_BCRYPT);
             $pdo->prepare("INSERT INTO member_auth (member_id, password_hash, portal_enabled) VALUES (?,?,1)
                            ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash), portal_enabled = 1")
